@@ -507,6 +507,79 @@ nexus watch 1 --agent --agent-yes    # AI auto-creates notes/tasks (great for cr
 
 ---
 
+## Milestone 15 — Slack Bridge ✅ (complete)
+**Goal:** Connect Nexus to Slack — a lightweight local HTTP server that handles
+Slack slash commands and formats project data as rich Block Kit payloads, with
+HMAC-SHA256 signature verification and an async AI agent path.  Zero new
+runtime dependencies (stdlib only).
+
+Deliverables:
+- [x] `nexus slack serve [--port N] [--secret TOKEN] [--project-id N]`
+  - Starts a local `http.server.HTTPServer` that handles `POST /` Slack slash commands
+  - Falls back to `default_project` from config when `--project-id` is omitted
+  - Optional HMAC-SHA256 signature verification via `SLACK_SIGNING_SECRET` env var or `--secret`
+  - Rejects stale requests (timestamp >5 minutes) to prevent replay attacks
+  - Dev mode (no secret) accepts all requests for quick iteration
+  - Rich startup panel shows project, URL, and signing status; Ctrl-C stops cleanly
+- [x] Slash command routing — all sent as `/nexus <subcommand>`:
+  - `status` (or empty) — project health overview (Block Kit: header, grade, progress, ready tasks, blocked tasks, timestamp footer)
+  - `next [N]` — next N ready tasks sorted by priority (default 5)
+  - `add <title>` — create a task, returns confirmation with task ID and `/nexus done` hint
+  - `done <id>` — mark a task done, returns confirmation with task title; accepts `#42` or `42`
+  - `agent` — fire-and-forget AI scrum-master review; returns immediately, posts result to `response_url` in background thread
+  - `help` — ephemeral reference card for all subcommands
+- [x] `nexus slack format [project_id]` — print Block Kit JSON to stdout for previewing / clipboard
+- [x] `nexus slack ping <webhook_url>` — POST a test message to an incoming webhook URL
+- [x] Pure-function command handlers (`_cmd_status`, `_cmd_next`, `_cmd_add`, `_cmd_done`, `_cmd_help`, `_route_command`) — all independently unit-testable
+- [x] Block Kit helpers (`_header`, `_mrkdwn`, `_divider`, `_context`, `_ephemeral`, `_in_channel`, `_slack_prio`)
+- [x] `_verify_slack_signature(secret, timestamp, body, signature)` — pure HMAC-SHA256 verification
+- [x] `_post_to_slack(url, payload)` — stdlib `urllib.request` POST helper
+- [x] `_async_agent(db, project_id, response_url)` — background thread AI review; handles no-AI, Gemini-only, missing project, and exception cases gracefully
+- [x] `_make_handler(db, project_id, signing_secret)` — factory returns a `BaseHTTPRequestHandler` subclass bound to the given DB and project; includes `/GET` health-check endpoint
+- [x] 77 new tests in `tests/test_slack.py`, 0 warnings — **573 total**
+  - Block Kit helper shape tests (header, mrkdwn, divider, context, ephemeral, in_channel, slack_prio)
+  - `_verify_slack_signature` — valid, wrong secret, tampered body, stale timestamp, malformed timestamp, empty inputs
+  - `_cmd_status` — missing project, valid project, blocks present, header name, health grade, ready tasks, blocked tasks, context footer
+  - `_cmd_next` — no ready tasks, tasks shown, limit respected, priority ordering, header block
+  - `_cmd_add` — creates task, in-channel response, title in payload, user name, task ID
+  - `_cmd_done` — marks done, in-channel, title in payload, `#` prefix accepted, non-numeric ephemeral, not-found ephemeral
+  - `_cmd_help` — ephemeral with all subcommands listed
+  - `_route_command` — empty text, status, next, next with limit, add, add without title, done, done without arg, agent (thread spawn), agent no response_url, help, unknown subcommand, case-insensitive
+  - `_async_agent` — no AI, Gemini-only, missing project, chat_turn called, no-changes message, write log reported, exception handled
+  - `_make_handler` — returns handler class with and without secret
+  - `slack_format` CLI — prints JSON, no project, bad project, default from config
+  - `slack_serve` CLI — missing project, no default, starts and stops (mocked server), project name shown, signature disabled/enabled, default from config
+  - `slack_ping` CLI — success, failure exits nonzero, failure shows error
+
+**Usage:**
+```bash
+# Start the slash command server (expose via ngrok for Slack to reach localhost)
+nexus slack serve --project-id 1 --port 3000
+
+# With signature verification (strongly recommended for production)
+export SLACK_SIGNING_SECRET=abc123...
+nexus slack serve --project-id 1
+
+# Set default project so you don't have to pass --project-id
+nexus config set default_project 1
+nexus slack serve
+
+# Preview Block Kit JSON in terminal
+nexus slack format 1
+
+# Copy Block Kit payload to clipboard (macOS)
+nexus slack format 1 | pbcopy
+
+# Test an incoming webhook
+nexus slack ping https://hooks.slack.com/services/T.../B.../...
+
+# Expose localhost to Slack with ngrok
+ngrok http 3000
+# Then set Slack app Request URL to: https://your-ngrok-host.ngrok.io
+```
+
+---
+
 ## Development Workflow
 
 ```bash

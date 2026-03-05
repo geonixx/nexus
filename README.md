@@ -19,11 +19,12 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 - **AI-powered intelligence** — task suggestions, estimates, health diagnosis, interactive chat (Claude / Gemini)
 - **AI scrum master** — autonomous agent reviews your project, surfaces blockers, adds notes, creates tasks (`nexus agent run`)
 - **Watch daemon** — background monitor that polls for stale work and can trigger the AI agent on a schedule (`nexus watch`)
+- **Slack bridge** — slash command server with Block Kit formatting, signature verification, and async AI review (`nexus slack serve`)
 - **GitHub Issues sync** — pull open issues into Nexus tasks, with upsert semantics (no duplicates on re-sync)
 - **Portfolio workspace** — health grades and cross-project priority queue across every project at once
 - **Security-first** — automatic file permission hardening, secret-in-config blocking, audit command
 - **Fully local** — single SQLite file, zero cloud, works offline
-- **496 tests, 0 warnings**
+- **573 tests, 0 warnings**
 
 ---
 
@@ -223,6 +224,40 @@ nexus watch --all                            # watch every project in the worksp
 ```
 
 Polls your projects on a configurable interval and surfaces stale in-progress tasks, long-blocked work, and forgotten backlog. Press `Ctrl-C` to stop.
+
+### Slack Bridge
+
+```bash
+# Start local slash command server (expose to Slack via ngrok)
+nexus slack serve --project-id 1            # listen on :3000 (default)
+nexus slack serve --port 4000 --project-id 1
+nexus slack serve                           # uses default_project from config
+
+# With HMAC signature verification (strongly recommended)
+export SLACK_SIGNING_SECRET=abc123...
+nexus slack serve --project-id 1
+
+# Preview Block Kit JSON output
+nexus slack format 1                        # print JSON to terminal
+nexus slack format 1 | pbcopy              # copy to clipboard (macOS)
+
+# Test an incoming webhook
+nexus slack ping https://hooks.slack.com/services/...
+```
+
+Slash commands (once `/nexus` is configured in your Slack app):
+
+| Command | Description |
+|---|---|
+| `/nexus` | Project health overview |
+| `/nexus status` | Project health overview |
+| `/nexus next [N]` | Next N ready tasks (default 5) |
+| `/nexus add <title>` | Create a new task |
+| `/nexus done <id>` | Mark a task done |
+| `/nexus agent` | AI scrum-master review (async, posts when complete) |
+| `/nexus help` | Usage reference |
+
+Expose localhost with [ngrok](https://ngrok.com): `ngrok http 3000`, then set your Slack app's Request URL to the ngrok URL.
 
 ### Configuration
 
