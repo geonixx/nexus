@@ -1,5 +1,9 @@
 # Nexus
 
+[![CI](https://github.com/geonixx/nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/geonixx/nexus/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 **Local-first CLI project and task intelligence tool.**
 
 Nexus lives in your terminal and stays out of your way. It tracks projects, sprints, tasks, and time — with an optional AI layer (Claude or Gemini) that can suggest tasks, diagnose project health, write standups, and chat interactively about your work.
@@ -13,11 +17,13 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 - **Full project management** — projects, sprints, tasks, time logging, priorities
 - **Task dependencies** — declare prerequisites, detect cycles, visualise the DAG
 - **AI-powered intelligence** — task suggestions, estimates, health diagnosis, interactive chat (Claude / Gemini)
+- **AI scrum master** — autonomous agent reviews your project, surfaces blockers, adds notes, creates tasks (`nexus agent run`)
+- **Watch daemon** — background monitor that polls for stale work and can trigger the AI agent on a schedule (`nexus watch`)
 - **GitHub Issues sync** — pull open issues into Nexus tasks, with upsert semantics (no duplicates on re-sync)
 - **Portfolio workspace** — health grades and cross-project priority queue across every project at once
 - **Security-first** — automatic file permission hardening, secret-in-config blocking, audit command
 - **Fully local** — single SQLite file, zero cloud, works offline
-- **415 tests, 0 warnings**
+- **496 tests, 0 warnings**
 
 ---
 
@@ -192,6 +198,32 @@ nexus chat [project_id]                      # interactive AI session with tool 
 
 Claude reads your full project context and can take real actions: list tasks, update status, create tasks, log time, query stats. Use `/help` inside chat for slash commands.
 
+### AI Scrum Master
+
+```bash
+nexus task ingest <project_id> "text"        # parse freeform text → structured task
+nexus task ingest <project_id> "text" --add  # parse and create immediately
+nexus task ingest 1 "$(pbpaste)"             # pipe from clipboard (macOS)
+
+nexus agent run [project_id]                 # autonomous AI project review
+nexus agent run [project_id] --dry-run       # show what agent would do, no writes
+nexus agent run [project_id] --yes           # auto-approve all write actions
+```
+
+The agent reads your project state, calls tools autonomously, surfaces stale/blocked work, and can add notes or create tasks without you driving every step. Requires `ANTHROPIC_API_KEY`.
+
+### Watch Daemon
+
+```bash
+nexus watch [project_id]                     # monitor for stale work (30-min interval)
+nexus watch [project_id] --interval 10       # check every 10 minutes
+nexus watch [project_id] --agent             # also trigger AI review each cycle
+nexus watch [project_id] --agent --agent-yes # AI review with auto-approve writes
+nexus watch --all                            # watch every project in the workspace
+```
+
+Polls your projects on a configurable interval and surfaces stale in-progress tasks, long-blocked work, and forgotten backlog. Press `Ctrl-C` to stop.
+
 ### Configuration
 
 ```bash
@@ -329,7 +361,7 @@ src/nexus/
 ## Roadmap
 
 - [ ] Slack / webhook bridge (create tasks from channel messages)
-- [ ] `nexus watch` — background daemon for notifications and auto-stale detection
+- [x] `nexus watch` — background daemon for stale detection + AI agent scheduling
 - [ ] Web UI (read-only dashboard, served locally)
 - [ ] Multi-user sync via git (collaborative local-first)
 - [ ] Plugin system for custom integrations

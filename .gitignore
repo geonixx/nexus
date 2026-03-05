@@ -25,12 +25,15 @@ env/
 htmlcov/
 coverage.xml
 
-# IDE
+# IDE / editor
 .vscode/
 .idea/
 *.swp
 *.swo
 .DS_Store
+
+# Claude Code workspace
+.claude/
 
 # Nexus runtime data
 ~/.nexus/

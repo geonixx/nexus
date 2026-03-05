@@ -20,6 +20,7 @@ from .commands.report import report_cmd
 from .commands.sprint import sprint_cmd
 from .commands.task import task_cmd
 from .commands.timer import timer_cmd
+from .commands.watch import watch_cmd
 from .commands.workspace import workspace_cmd
 from .db import DEFAULT_DB_PATH, Database
 from .ui import nexus_banner
@@ -66,4 +67,5 @@ cli.add_command(dashboard_cmd)
 cli.add_command(export_cmd)
 cli.add_command(security_cmd)
 cli.add_command(timer_cmd)
+cli.add_command(watch_cmd)
 cli.add_command(workspace_cmd)

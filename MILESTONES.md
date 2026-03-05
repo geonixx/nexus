@@ -448,6 +448,65 @@ nexus agent run                  # uses default_project from config
 
 ---
 
+## Milestone 14 — Watch Daemon ✅ (complete)
+**Goal:** Add a background monitoring daemon that polls projects on a configurable
+interval, surfaces stale and blocked work, and can optionally trigger the autonomous
+AI scrum master agent on a schedule.
+
+Deliverables:
+- [x] `nexus watch [project_id] [--all] [--interval N] [--agent] [--agent-yes] [--stale-days N]`
+  - Polls every N minutes (default 30); press Ctrl-C to stop cleanly (SIGINT handler)
+  - Single-project or `--all` portfolio-wide monitoring
+  - Falls back to `default_project` from config if no project_id given
+  - Per-project summary: healthy ✓ or issue tables (stale in-progress, long-blocked, forgotten backlog)
+  - Shows count of ready tasks (all deps met) and currently blocked tasks
+  - `--agent` triggers `_run_agent_pass()` each cycle — runs the AI scrum master with dry-run by default
+  - `--agent-yes` enables full AI write approval (auto-yes) for automated/cron use
+  - Inner sleep loop ticks at 1-second intervals so Ctrl-C feels instant even on long intervals
+- [x] `_check_project(db, project, stale_days, now)` — pure, testable per-project health check
+  - Stale in-progress: `get_stale_tasks(project_id, threshold)` — tasks with no logged time
+  - Long-blocked: manually filtered `status == BLOCKED and updated_at < stale_days*2 threshold`
+  - Forgotten backlog: `status == TODO and created_at < stale_days*5 threshold`
+  - Capped backlog display at 5 + "… and N more"
+  - Projects with no tasks show a `—  #id name (no tasks)` line and return 0
+- [x] `_run_agent_pass(db, projects, auto_yes)` — calls the agent for each project
+  - Lazy-imports AI modules (safe when AI extras not installed)
+  - Skips gracefully when no AI key or Gemini-only (prints skip message)
+  - Catches exceptions and prints error without crashing the daemon
+- [x] `_age(dt, now)` helper — human-readable duration ("just now", "5h ago", "14d ago")
+- [x] `_prio(p)` helper — Rich-coloured priority label; guards against `[/]` empty-closing-tag bug
+- [x] CI badge + provider badges added to `README.md`
+- [x] `README.md` updated with `nexus watch` and `nexus agent` / `nexus task ingest` command sections
+- [x] Roadmap updated: `nexus watch` marked complete
+- [x] `.github/workflows/ci.yml` — runs full suite on Python 3.11/3.12/3.13 on every push + PR
+- [x] 34 new tests in `tests/test_watch.py`, 0 warnings — **496 total**
+  - `_age` formatting (just now, hours, 1 day, many days)
+  - `_prio` markup correctness, no `[/]` bug
+  - `_check_project` — empty project, fresh TODO, in-progress with log, stale in-progress, blocked stale, done tasks, return type
+  - `watch_cmd` CLI — clean exit, project name in output, stopped message, cycle header, healthy output, missing project, no default, default from config, --all flag, no projects error, stale task shown, --agent with no AI
+  - `_run_agent_pass` — no AI skip, Gemini skip, chat_turn called, multi-project, write_log populated, exception handled
+
+**Usage:**
+```bash
+# Simple project watcher
+nexus watch 1                        # check every 30 min, print issues
+nexus watch 1 --interval 5           # check every 5 minutes
+nexus watch 1 --stale-days 7         # use 7-day stale threshold
+
+# Portfolio-wide monitoring
+nexus watch --all                    # watch every project
+nexus watch --all --interval 60      # hourly portfolio sweep
+
+# AI-powered monitoring (dry-run by default)
+nexus watch 1 --agent                # AI reviews each cycle, shows what it would do
+nexus watch 1 --agent --agent-yes    # AI auto-creates notes/tasks (great for cron)
+
+# Add to crontab for automated morning review:
+# 0 9 * * 1-5 nexus watch 1 --agent --agent-yes --interval 1 &
+```
+
+---
+
 ## Development Workflow
 
 ```bash
