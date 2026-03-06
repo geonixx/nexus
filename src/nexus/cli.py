@@ -9,6 +9,7 @@ import click
 from . import __version__
 from .commands.agent import agent_cmd
 from .commands.chat import chat_cmd
+from .commands.claude_init import claude_init_cmd
 from .commands.config import config_cmd
 from .commands.init import init_cmd
 from .commands.dashboard import dashboard_cmd
@@ -58,6 +59,7 @@ def info_cmd(db: Database):
 
 cli.add_command(agent_cmd)
 cli.add_command(chat_cmd)
+cli.add_command(claude_init_cmd)
 cli.add_command(config_cmd)
 cli.add_command(init_cmd)
 cli.add_command(github_cmd)

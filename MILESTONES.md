@@ -782,6 +782,58 @@ nexus agent run 1                # iterative tool calls, richer analysis
 
 ---
 
+## Milestone 20 — Claude Code Integration ✅ (complete)
+**Goal:** Wire Nexus into Claude Code via a generated `CLAUDE.md` snippet.  A single
+command — `nexus claude-init` — produces a ready-to-paste (or file-written) Markdown
+file that tells Claude Code exactly how to interact with the project: check tasks
+before starting, log time after finishing, and which commands are forbidden.
+
+Deliverables:
+- [x] **`build_claude_md(project_name, project_id, nexus_db_path, test_cmd)`** in `commands/claude_init.py`
+  - Pure function, no DB access — renders the `_TEMPLATE` string with `.format()`
+  - Template sections: Before starting work, After completing work, Rules, Project reference, Quick reference
+  - Rules section explicitly forbids `nexus agent run` (two-AI problem), destructive ops, and `nexus slack serve`
+  - All embedded commands pre-filled with `NEXUS_DB=<path>` and the project ID so they are ready to run
+- [x] **`claude_init_cmd`** Click command (`nexus claude-init`)
+  - `PROJECT_ID` — optional argument; falls back to `default_project` from config (same pattern as `nexus chat`)
+  - `--output / -o PATH` — write to file; creates parent directories; shows success message with byte count
+  - `--db-path PATH` — override the DB path embedded in the snippet (independent of `--db` / `NEXUS_DB`)
+  - `--test-cmd TEXT` — test command to embed (default: `pytest`; common override: `uv run pytest`)
+  - Default (no `--output`): `click.echo(content)` to stdout — unmodified, no Rich processing
+- [x] Registered in `cli.py` between `chat_cmd` and `config_cmd`
+- [x] **31 tests** in `tests/test_claude_init.py` — **797 total**
+  - `TestBuildClaudeMd` (10) — pure function: project name, ID, DB path, test_cmd, forbidden section, quick reference, section headers, multi-occurrence of project ID
+  - `TestClaudeInitStdout` (6) — CLI stdout: basic output, DB path embedded, forbidden section, custom test cmd, custom db-path, default pytest
+  - `TestClaudeInitFileOutput` (5) — file writing: creates file, content complete, creates parent dirs, success message, short `-o` flag
+  - `TestClaudeInitDefaultProject` (3) — config fallback: uses default_project, errors when missing, explicit ID overrides default
+  - `TestClaudeInitErrors` (2) — missing project (direct and via config)
+  - `TestClaudeInitContent` (5) — read/write commands present, NEXUS_DB= in output, project ID in commands, custom db-path in NEXUS_DB var
+
+Also shipped in this session (polish tasks):
+- [x] `nexus task update --help` now shows the status-change subcommands (`done/start/block/cancel`) in the docstring
+- [x] `nexus task suggest` now shows the provider name in the header rule (`Provider: Ollama (llama3.2)`)
+
+**Usage:**
+```bash
+# Print to stdout (pipe or paste wherever needed)
+nexus claude-init 1
+
+# Write directly to the project root
+nexus claude-init 1 --output CLAUDE.md
+
+# Write to Claude Code's project config dir
+nexus claude-init 1 --output .claude/CLAUDE.md --test-cmd "uv run pytest"
+
+# Use default_project from config (no project_id needed)
+nexus config set default_project 1
+nexus claude-init --output CLAUDE.md
+
+# Override the embedded DB path (e.g. project has its own database)
+nexus claude-init 1 --db-path .nexus/myproject.db --output CLAUDE.md
+```
+
+---
+
 ## Milestone 19 — Offline Chat ✅ (complete)
 **Goal:** Make `nexus chat` work with Gemini and Ollama (advisory mode) — the last
 local-first gap.  Previously `nexus chat` required `ANTHROPIC_API_KEY` and exited

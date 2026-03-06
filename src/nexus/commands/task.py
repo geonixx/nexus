@@ -277,7 +277,15 @@ def task_update(
     add_tags: tuple[str, ...],
     remove_tags: tuple[str, ...],
 ):
-    """Update task fields."""
+    """Update task fields (title, priority, estimate, sprint, tags).
+
+    \b
+    To change status use the dedicated subcommands:
+      nexus task done <id>    — mark complete
+      nexus task start <id>   — mark in-progress
+      nexus task block <id>   — mark blocked
+      nexus task cancel <id>  — mark cancelled
+    """
     updates = {}
     if title:
         updates["title"] = title
@@ -369,7 +377,7 @@ def task_suggest(db: Database, project_id: int, auto_add: bool):
     existing_titles = [t.title for t in existing]
 
     console.print(Rule(f"[nexus.title]AI · Suggesting tasks for '{project.name}'[/nexus.title]", style="cyan"))
-    console.print()
+    console.print(f"  [dim]Provider: {ai.provider_name}[/dim]\n")
 
     system, user = suggest_tasks_prompt(project.name, project.description, existing_titles)
 

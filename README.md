@@ -27,7 +27,8 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 - **Security-first** — automatic file permission hardening, secret-in-config blocking, audit command
 - **Fully local** — single SQLite file, WAL mode for concurrent access, zero cloud, works offline
 - **Interactive advisory chat** — `nexus chat` works with all three providers; Gemini/Ollama get advisory mode (streaming REPL that suggests CLI commands); Anthropic gets full tool mode
-- **766 tests, 0 warnings**
+- **Claude Code integration** — `nexus claude-init` generates a ready-to-use `CLAUDE.md` snippet that wires Claude Code into your task tracker: check tasks before starting, log time when done, explicit forbidden-command list
+- **797 tests, 0 warnings**
 
 ---
 
