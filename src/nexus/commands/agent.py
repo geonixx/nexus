@@ -333,7 +333,7 @@ def _handle_tool(
         description = inputs.get("description", "")
         estimate = inputs.get("estimate_hours")
         action = (
-            f"Create task: [{priority}] '{title}'"
+            f"Create task: ({priority}) '{title}'"
             + (f" ({estimate}h)" if estimate else "")
         )
         if not _confirm_write(action, dry_run=dry_run, auto_yes=auto_yes):
@@ -614,7 +614,7 @@ def _run_offline_agent(
             title = action["title"]
             priority = action["priority"]
             description = action.get("description", "")
-            action_desc = f"Create task: [{priority}] '{title}'"
+            action_desc = f"Create task: ({priority}) '{title}'"
             if _confirm_write(action_desc, dry_run=dry_run, auto_yes=auto_yes):
                 t = db.create_task(
                     project_id=project_id,

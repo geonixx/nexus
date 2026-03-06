@@ -729,8 +729,10 @@ class Database:
         """Return in_progress tasks with no time entry logged after `since`.
 
         A task is "stale" if it's been in_progress but nobody has logged any
-        time on it in the last N days — either it has no time entries at all,
-        or the most recent entry predates `since`.
+        time on it in the last N days:
+          - Has time entries but the most recent one predates `since`, OR
+          - Has NO time entries AND was last updated before `since`
+            (grace period: a task just moved to in_progress is not stale yet)
         """
         with self._conn() as conn:
             rows = conn.execute(
@@ -739,9 +741,10 @@ class Database:
                    LEFT JOIN time_entries te ON te.task_id = t.id
                    WHERE t.project_id = ? AND t.status = ?
                    GROUP BY t.id
-                   HAVING MAX(te.logged_at) < ? OR MAX(te.logged_at) IS NULL
+                   HAVING MAX(te.logged_at) < ?
+                      OR (MAX(te.logged_at) IS NULL AND (t.updated_at IS NULL OR t.updated_at < ?))
                    ORDER BY t.updated_at""",
-                (project_id, Status.IN_PROGRESS.value, since.isoformat()),
+                (project_id, Status.IN_PROGRESS.value, since.isoformat(), since.isoformat()),
             ).fetchall()
         return [_row_to_task(r) for r in rows]
 

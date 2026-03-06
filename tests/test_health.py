@@ -98,14 +98,31 @@ def test_notes_are_task_scoped(tmp_path):
 
 
 def test_get_stale_tasks_no_entries(tmp_path):
-    """In-progress task with NO time entries is stale."""
+    """In-progress task with NO time entries and old updated_at is stale."""
     db = Database(tmp_path / "t.db")
     p = db.create_project("P")
     t = db.create_task(p.id, "Task")
     db.update_task(t.id, status=Status.IN_PROGRESS)
-    since = datetime.now(timezone.utc) - timedelta(days=1)
+    # since is in the future → task's updated_at is before the threshold → stale
+    since = datetime.now(timezone.utc) + timedelta(days=1)
     stale = db.get_stale_tasks(p.id, since)
     assert any(s.id == t.id for s in stale)
+
+
+def test_get_stale_tasks_fresh_start_not_stale(tmp_path):
+    """In-progress task with no time entries but recent updated_at is NOT stale.
+
+    Grace period: a task just moved to in_progress should not appear as stale
+    immediately — only once updated_at itself predates the threshold.
+    """
+    db = Database(tmp_path / "t.db")
+    p = db.create_project("P")
+    t = db.create_task(p.id, "Fresh task")
+    db.update_task(t.id, status=Status.IN_PROGRESS)
+    # since is in the past → task's updated_at (now) is after the threshold → not stale
+    since = datetime.now(timezone.utc) - timedelta(days=3)
+    stale = db.get_stale_tasks(p.id, since)
+    assert not any(s.id == t.id for s in stale)
 
 
 def test_get_stale_tasks_old_entry(tmp_path):

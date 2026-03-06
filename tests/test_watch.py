@@ -130,11 +130,13 @@ class TestCheckProject:
         assert _check_project(db, project, stale_days=3, now=now) == 0
 
     def test_stale_in_progress_no_log_counted(self, db, project):
-        """In-progress task with NO time log → stale by definition."""
+        """In-progress task with NO time log and old updated_at is stale."""
         task = db.create_task(project_id=project.id, title="Forgotten work")
         db.update_task(task.id, status=Status.IN_PROGRESS)
-        # Intentionally no db.log_time() call — get_stale_tasks flags these
-        now = datetime.now(timezone.utc)
+        # Intentionally no db.log_time() call.
+        # Advance now by 4 days so stale_threshold (now - 3d) is in the future
+        # relative to when the task was created — triggers the stale condition.
+        now = datetime.now(timezone.utc) + timedelta(days=4)
         result = _check_project(db, project, stale_days=3, now=now)
         assert result >= 1
 
