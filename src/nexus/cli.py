@@ -18,6 +18,7 @@ from .commands.project import project_cmd
 from .commands.security import security_cmd
 from .commands.report import report_cmd
 from .commands.slack import slack_cmd
+from .commands.tag import tag_cmd
 from .commands.sprint import sprint_cmd
 from .commands.task import task_cmd
 from .commands.timer import timer_cmd
@@ -68,6 +69,7 @@ cli.add_command(dashboard_cmd)
 cli.add_command(export_cmd)
 cli.add_command(security_cmd)
 cli.add_command(slack_cmd)
+cli.add_command(tag_cmd)
 cli.add_command(timer_cmd)
 cli.add_command(watch_cmd)
 cli.add_command(workspace_cmd)

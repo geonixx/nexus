@@ -580,6 +580,70 @@ ngrok http 3000
 
 ---
 
+## Milestone 16 — Tags + Agent-Ready Infrastructure ✅ (complete)
+**Goal:** Address the two most important gaps from external feedback — missing task labels
+(the #1 feature request) and agent orchestration safety (runaway API spend in multi-agent
+environments).  Also enable concurrent agent access with SQLite WAL mode.
+
+Deliverables:
+- [x] **SQLite WAL mode** — `PRAGMA journal_mode=WAL` set on every connection in `_connect()`
+  - Readers no longer block writers; writers no longer block readers
+  - Essential for concurrent access by multiple `nexus agent` / `nexus watch` processes
+  - Persists in the DB file; fully idempotent for existing databases
+- [x] **Task tags** — free-form lowercase labels stored in a `task_tags` junction table
+  - `task_tags(id, task_id, tag, created_at)` with `UNIQUE(task_id, tag)` and `ON DELETE CASCADE`
+  - `CREATE TABLE IF NOT EXISTS` migration — safe for all existing databases
+  - `db.add_tag(task_id, tag)` — `INSERT OR IGNORE`; normalised via `strip().lower()`
+  - `db.remove_tag(task_id, tag)` — returns `True` if tag was found and removed
+  - `db.get_tags(task_id)` → `List[str]` — sorted alphabetically
+  - `db.list_tasks_by_tag(tag, project_id=None)` — cross-project or scoped query
+  - `db.get_all_tags(project_id=None)` → `List[(tag, count)]` — usage counts, sorted by frequency
+- [x] **`nexus task` integration** — tags woven into 5 existing subcommands
+  - `nexus task add` — `--tag <name>` (repeatable); tags applied immediately after creation
+  - `nexus task update` — `--tag <name>` (add, repeatable) and `--untag <name>` (remove, repeatable); tag-only updates allowed without field changes
+  - `nexus task show` — tags displayed in detail panel below dependencies
+  - `nexus task list` — `--tag <name>` filter; applies on top of status/sprint filters
+  - `nexus task next` — `--tag <name>` filter; applied to the ready-task queue
+- [x] **`nexus tag` command group** — new top-level group in `cli.py`
+  - `nexus tag list [project_id]` — table of all tags in use with task counts; optional project scope
+  - `nexus tag tasks <tag> [--project-id N]` — cross-project task list for a given tag, grouped by project
+- [x] **`--max-agent-cycles N`** on `nexus watch --agent`
+  - Default `0` = unlimited (existing behaviour preserved)
+  - When limit reached: prints one-time warning, stops calling `_run_agent_pass()`
+  - Header shows `(max N cycles)` when limit is set
+  - Prevents runaway API spend in automated / cron environments
+- [x] 50 new tests in `tests/test_tags.py`, 0 warnings — **623 total**
+  - `TestWALMode` — verifies `PRAGMA journal_mode` returns `'wal'`
+  - `TestAddTag`, `TestRemoveTag`, `TestGetTags` — full DB method coverage incl. normalisation, idempotency, cascade delete
+  - `TestListTasksByTag`, `TestGetAllTags` — project scope, cross-project, count accuracy, frequency sort
+  - `TestTaskAddTag`, `TestTaskUpdateTag`, `TestTaskShowTags`, `TestTaskListTag`, `TestTaskNextTag` — full CLI coverage
+  - `TestTagListCmd`, `TestTagTasksCmd` — table output, no-tags/no-tasks messages, project scope, invalid project
+  - `TestWatchMaxAgentCycles` — max shown in header, zero means unlimited
+
+**Usage:**
+```bash
+# Tagging tasks
+nexus task add 1 "Fix auth bug" --tag bug --tag auth
+nexus task update 5 --tag backend --untag draft
+nexus task show 5                                 # shows tags in detail panel
+
+# Filtering
+nexus task list 1 --tag bug
+nexus task next 1 --tag auth
+
+# Tag management
+nexus tag list                                    # all tags in workspace
+nexus tag list 1                                  # tags for project #1
+nexus tag tasks bug                               # all tasks tagged 'bug'
+nexus tag tasks bug --project-id 1               # scoped to project
+
+# Agent loop safety
+nexus watch 1 --agent --max-agent-cycles 5        # cap AI at 5 passes
+nexus watch 1 --agent --max-agent-cycles 0        # unlimited (default)
+```
+
+---
+
 ## Development Workflow
 
 ```bash

@@ -18,13 +18,14 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 - **Task dependencies** — declare prerequisites, detect cycles, visualise the DAG
 - **AI-powered intelligence** — task suggestions, estimates, health diagnosis, interactive chat (Claude / Gemini)
 - **AI scrum master** — autonomous agent reviews your project, surfaces blockers, adds notes, creates tasks (`nexus agent run`)
+- **Tags / labels** — free-form tags on any task; filter by tag across sprints, next-queue, and search (`nexus tag`)
 - **Watch daemon** — background monitor that polls for stale work and can trigger the AI agent on a schedule (`nexus watch`)
 - **Slack bridge** — slash command server with Block Kit formatting, signature verification, and async AI review (`nexus slack serve`)
 - **GitHub Issues sync** — pull open issues into Nexus tasks, with upsert semantics (no duplicates on re-sync)
 - **Portfolio workspace** — health grades and cross-project priority queue across every project at once
 - **Security-first** — automatic file permission hardening, secret-in-config blocking, audit command
-- **Fully local** — single SQLite file, zero cloud, works offline
-- **573 tests, 0 warnings**
+- **Fully local** — single SQLite file, WAL mode for concurrent access, zero cloud, works offline
+- **623 tests, 0 warnings**
 
 ---
 
@@ -182,6 +183,28 @@ nexus github sync <project_id> owner/repo --max 100    # cap at 100 issues
 # Re-run any time — existing tasks are updated, not duplicated
 ```
 
+### Tags
+
+```bash
+# Add tags when creating or updating tasks
+nexus task add <project_id> "Fix login bug" --tag bug --tag auth
+nexus task update <id> --tag security          # add a tag
+nexus task update <id> --untag auth            # remove a tag
+nexus task show <id>                           # tags shown in detail view
+
+# Filter task lists and next-queue by tag
+nexus task list <project_id> --tag bug
+nexus task next <project_id> --tag auth
+
+# Tag management
+nexus tag list                                 # all tags in workspace with task counts
+nexus tag list <project_id>                    # scoped to a single project
+nexus tag tasks <tag>                          # every task carrying a tag (cross-project)
+nexus tag tasks <tag> --project-id <id>        # scoped to a project
+```
+
+Tags are normalised to lowercase on write — `Bug`, `bug`, and `  bug  ` all resolve to the same tag.
+
 ### Exports
 
 ```bash
@@ -216,14 +239,15 @@ The agent reads your project state, calls tools autonomously, surfaces stale/blo
 ### Watch Daemon
 
 ```bash
-nexus watch [project_id]                     # monitor for stale work (30-min interval)
-nexus watch [project_id] --interval 10       # check every 10 minutes
-nexus watch [project_id] --agent             # also trigger AI review each cycle
-nexus watch [project_id] --agent --agent-yes # AI review with auto-approve writes
-nexus watch --all                            # watch every project in the workspace
+nexus watch [project_id]                          # monitor for stale work (30-min interval)
+nexus watch [project_id] --interval 10            # check every 10 minutes
+nexus watch [project_id] --agent                  # also trigger AI review each cycle
+nexus watch [project_id] --agent --agent-yes      # AI review with auto-approve writes
+nexus watch [project_id] --agent --max-agent-cycles 3  # cap AI calls (prevent runaway spend)
+nexus watch --all                                 # watch every project in the workspace
 ```
 
-Polls your projects on a configurable interval and surfaces stale in-progress tasks, long-blocked work, and forgotten backlog. Press `Ctrl-C` to stop.
+Polls your projects on a configurable interval and surfaces stale in-progress tasks, long-blocked work, and forgotten backlog. Press `Ctrl-C` to stop. Use `--max-agent-cycles N` to cap the number of AI passes per session (useful in automated/cron environments).
 
 ### Slack Bridge
 
@@ -354,7 +378,7 @@ uv sync --dev
 # or: pip install -e ".[ai]" && pip install pytest pytest-cov
 
 # Run tests
-uv run pytest                                # all 415 tests
+uv run pytest                                # all 623 tests
 uv run pytest tests/test_deps.py -v         # specific module
 uv run pytest --cov=nexus --cov-report=term-missing  # with coverage
 
@@ -378,7 +402,8 @@ src/nexus/
 ├── ui.py             # Rich tables, panels, theme, print_* helpers
 └── commands/
     ├── project.py    # nexus project *
-    ├── task.py       # nexus task *  (includes depend/graph)
+    ├── task.py       # nexus task *  (includes depend/graph, --tag)
+    ├── tag.py        # nexus tag *
     ├── sprint.py     # nexus sprint *
     ├── report.py     # nexus report *
     ├── dashboard.py  # nexus dashboard
@@ -388,6 +413,7 @@ src/nexus/
     ├── github.py     # nexus github *
     ├── workspace.py  # nexus workspace *
     ├── config.py     # nexus config *
+    ├── watch.py      # nexus watch
     └── security.py   # nexus security
 ```
 
@@ -395,10 +421,13 @@ src/nexus/
 
 ## Roadmap
 
-- [ ] Slack / webhook bridge (create tasks from channel messages)
 - [x] `nexus watch` — background daemon for stale detection + AI agent scheduling
+- [x] Slack bridge — slash command server with Block Kit and async AI review
+- [x] Tags / labels — free-form task labels with cross-project search
+- [x] SQLite WAL mode — concurrent multi-agent read/write access
 - [ ] Web UI (read-only dashboard, served locally)
 - [ ] Multi-user sync via git (collaborative local-first)
+- [ ] Recurring tasks
 - [ ] Plugin system for custom integrations
 
 ---

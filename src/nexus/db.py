@@ -160,6 +160,10 @@ class Database:
         conn = sqlite3.connect(str(self.path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        # WAL mode: readers don't block writers, writers don't block readers.
+        # Essential for concurrent access by multiple agent processes.
+        # The setting persists in the DB file, so this is idempotent.
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     @contextmanager
@@ -198,6 +202,16 @@ class Database:
                        depends_on_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
                        created_at    TEXT NOT NULL,
                        UNIQUE(task_id, depends_on_id)
+                   )"""
+            )
+            # M16 migration: task_tags table.
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS task_tags (
+                       id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                       task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                       tag        TEXT NOT NULL,
+                       created_at TEXT NOT NULL,
+                       UNIQUE(task_id, tag)
                    )"""
             )
         # M10: tighten DB file permissions so only the owning user can read it
@@ -492,6 +506,92 @@ class Database:
                 (task_id,),
             ).fetchall()
         return [_row_to_task_note(r) for r in rows]
+
+    # ── Task Tags ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_tag(tag: str) -> str:
+        """Strip whitespace and lowercase a tag."""
+        return tag.strip().lower()
+
+    def add_tag(self, task_id: int, tag: str) -> bool:
+        """Add a tag to a task.
+
+        Tag is normalized (stripped, lowercased) before storage.
+        Returns True if the tag was added, False if it already existed.
+        """
+        tag = self._normalize_tag(tag)
+        if not tag:
+            return False
+        now = datetime.now(timezone.utc).isoformat()
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO task_tags (task_id, tag, created_at) VALUES (?,?,?)",
+                (task_id, tag, now),
+            )
+        return cur.rowcount > 0
+
+    def remove_tag(self, task_id: int, tag: str) -> bool:
+        """Remove a tag from a task. Returns True if it existed."""
+        tag = self._normalize_tag(tag)
+        with self._conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM task_tags WHERE task_id=? AND tag=?",
+                (task_id, tag),
+            )
+        return cur.rowcount > 0
+
+    def get_tags(self, task_id: int) -> List[str]:
+        """Return sorted list of tags for a task."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT tag FROM task_tags WHERE task_id=? ORDER BY tag",
+                (task_id,),
+            ).fetchall()
+        return [row["tag"] for row in rows]
+
+    def list_tasks_by_tag(self, tag: str, project_id: Optional[int] = None) -> List[Task]:
+        """Return all tasks that have *tag*, optionally scoped to one project.
+
+        Results are ordered by project_id then updated_at DESC for consistent output.
+        """
+        tag = self._normalize_tag(tag)
+        with self._conn() as conn:
+            if project_id is not None:
+                rows = conn.execute(
+                    """SELECT t.* FROM tasks t
+                       JOIN task_tags tt ON tt.task_id = t.id
+                       WHERE tt.tag=? AND t.project_id=?
+                       ORDER BY t.updated_at DESC""",
+                    (tag, project_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT t.* FROM tasks t
+                       JOIN task_tags tt ON tt.task_id = t.id
+                       WHERE tt.tag=?
+                       ORDER BY t.project_id, t.updated_at DESC""",
+                    (tag,),
+                ).fetchall()
+        return [_row_to_task(row) for row in rows]
+
+    def get_all_tags(self, project_id: Optional[int] = None) -> List[tuple]:
+        """Return (tag, count) pairs sorted by count descending, then alphabetically."""
+        with self._conn() as conn:
+            if project_id is not None:
+                rows = conn.execute(
+                    """SELECT tt.tag, COUNT(*) as cnt FROM task_tags tt
+                       JOIN tasks t ON t.id = tt.task_id
+                       WHERE t.project_id=?
+                       GROUP BY tt.tag ORDER BY cnt DESC, tt.tag""",
+                    (project_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT tag, COUNT(*) as cnt FROM task_tags
+                       GROUP BY tag ORDER BY cnt DESC, tag"""
+                ).fetchall()
+        return [(row["tag"], row["cnt"]) for row in rows]
 
     # ── Task Dependencies ─────────────────────────────────────────────────
 

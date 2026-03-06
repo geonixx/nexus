@@ -33,6 +33,12 @@ def task_cmd():
 )
 @click.option("-e", "--estimate", type=float, default=None, help="Estimate in hours.")
 @click.option("-s", "--sprint", "sprint_id", type=int, default=None, help="Assign to sprint id.")
+@click.option(
+    "--tag", "tags",
+    multiple=True,
+    metavar="TAG",
+    help="Add a tag (repeatable: --tag security --tag tech-debt).",
+)
 @click.pass_obj
 def task_add(
     db: Database,
@@ -42,6 +48,7 @@ def task_add(
     priority: str,
     estimate: float | None,
     sprint_id: int | None,
+    tags: tuple[str, ...],
 ):
     """Add a task to a project."""
     project = db.get_project(project_id)
@@ -56,7 +63,10 @@ def task_add(
         estimate_hours=estimate,
         sprint_id=sprint_id,
     )
-    print_success(f"Added task [bold]#{t.id}[/bold] '{t.title}' to project '{project.name}'")
+    for tag in tags:
+        db.add_tag(t.id, tag)
+    tag_suffix = f"  [dim]tags: {', '.join(tags)}[/dim]" if tags else ""
+    print_success(f"Added task [bold]#{t.id}[/bold] '{t.title}' to project '{project.name}'{tag_suffix}")
 
 
 @task_cmd.command("show")
@@ -150,25 +160,51 @@ def task_show(db: Database, task_id: int):
             parts.append(f"{icon} #{d.id} {d.title}")
         console.print("  [dim]Needed by:[/dim]   " + "  ·  ".join(parts))
 
+    # Tags
+    tags = db.get_tags(task_id)
+    if tags:
+        tag_str = "  ".join(f"[cyan]{t}[/cyan]" for t in tags)
+        console.print(f"  [dim]Tags:[/dim]        {tag_str}")
+
 
 @task_cmd.command("list")
 @click.argument("project_id", type=int)
 @click.option("--status", type=click.Choice([s.value for s in Status]), default=None)
 @click.option("--sprint", "sprint_id", type=int, default=None)
+@click.option("--tag", default=None, metavar="TAG", help="Filter by tag.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
 @click.pass_obj
-def task_list(db: Database, project_id: int, status: str | None, sprint_id: int | None, as_json: bool):
+def task_list(
+    db: Database,
+    project_id: int,
+    status: str | None,
+    sprint_id: int | None,
+    tag: str | None,
+    as_json: bool,
+):
     """List tasks for a project."""
     project = db.get_project(project_id)
     if not project:
         print_error(f"Project id={project_id} not found.")
         raise SystemExit(1)
-    s = Status(status) if status else None
-    tasks = db.list_tasks(project_id=project_id, sprint_id=sprint_id, status=s)
+
+    if tag:
+        tasks = db.list_tasks_by_tag(tag, project_id=project_id)
+        # Further filter by status/sprint if requested
+        if status:
+            tasks = [t for t in tasks if t.status == Status(status)]
+        if sprint_id:
+            tasks = [t for t in tasks if t.sprint_id == sprint_id]
+        title = f"Tasks tagged '{tag}' — {project.name}"
+    else:
+        s = Status(status) if status else None
+        tasks = db.list_tasks(project_id=project_id, sprint_id=sprint_id, status=s)
+        title = f"Tasks — {project.name}"
+
     if as_json:
         click.echo(json.dumps([t.model_dump(mode="json") for t in tasks], indent=2))
         return
-    print_tasks(tasks, title=f"Tasks — {project.name}")
+    print_tasks(tasks, title=title)
 
 
 @task_cmd.command("done")
@@ -217,6 +253,18 @@ def task_block(db: Database, task_id: int):
 @click.option("-p", "--priority", type=click.Choice([p.value for p in Priority]), default=None)
 @click.option("-e", "--estimate", type=float, default=None)
 @click.option("-s", "--sprint", "sprint_id", type=int, default=None)
+@click.option(
+    "--tag", "add_tags",
+    multiple=True,
+    metavar="TAG",
+    help="Add a tag (repeatable).",
+)
+@click.option(
+    "--untag", "remove_tags",
+    multiple=True,
+    metavar="TAG",
+    help="Remove a tag (repeatable).",
+)
 @click.pass_obj
 def task_update(
     db: Database,
@@ -226,6 +274,8 @@ def task_update(
     priority: str | None,
     estimate: float | None,
     sprint_id: int | None,
+    add_tags: tuple[str, ...],
+    remove_tags: tuple[str, ...],
 ):
     """Update task fields."""
     updates = {}
@@ -239,13 +289,21 @@ def task_update(
         updates["estimate_hours"] = estimate
     if sprint_id is not None:
         updates["sprint_id"] = sprint_id
-    if not updates:
+    if not updates and not add_tags and not remove_tags:
         print_info("Nothing to update.")
         return
-    t = db.update_task(task_id, **updates)
-    if not t:
+    if updates:
+        t = db.update_task(task_id, **updates)
+        if not t:
+            print_error(f"Task id={task_id} not found.")
+            raise SystemExit(1)
+    elif not db.get_task(task_id):
         print_error(f"Task id={task_id} not found.")
         raise SystemExit(1)
+    for tag in add_tags:
+        db.add_tag(task_id, tag)
+    for tag in remove_tags:
+        db.remove_tag(task_id, tag)
     print_success(f"Updated task #{task_id}")
 
 
@@ -453,8 +511,9 @@ def task_estimate(db: Database, task_id: int):
 @task_cmd.command("next")
 @click.argument("project_id", type=int, required=False, default=None)
 @click.option("-n", "--count", type=int, default=5, help="Number of tasks to show (default: 5).")
+@click.option("--tag", default=None, metavar="TAG", help="Only show tasks with this tag.")
 @click.pass_obj
-def task_next(db: Database, project_id: int | None, count: int):
+def task_next(db: Database, project_id: int | None, count: int, tag: str | None):
     """Show the highest-priority tasks to work on next.
 
     PROJECT_ID may be omitted if 'default_project' is set in config.
@@ -479,7 +538,11 @@ def task_next(db: Database, project_id: int | None, count: int):
         print_error(f"Project id={project_id} not found.")
         raise SystemExit(1)
 
-    all_tasks = db.list_tasks(project_id=project_id)
+    if tag:
+        tagged_ids = {t.id for t in db.list_tasks_by_tag(tag, project_id=project_id)}
+        all_tasks = [t for t in db.list_tasks(project_id=project_id) if t.id in tagged_ids]
+    else:
+        all_tasks = db.list_tasks(project_id=project_id)
 
     PRIORITY_WEIGHT = {
         Priority.CRITICAL: 4,

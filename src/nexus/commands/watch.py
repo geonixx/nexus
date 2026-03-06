@@ -91,6 +91,16 @@ _STALE_BACKLOG_DAYS = 15
     show_default=True,
     help="Days of inactivity before a task is considered stale.",
 )
+@click.option(
+    "--max-agent-cycles",
+    type=int,
+    default=0,
+    metavar="N",
+    help=(
+        "Stop running the AI agent after N cycles (0 = unlimited). "
+        "Prevents runaway API spend in automated environments."
+    ),
+)
 @click.pass_obj
 def watch_cmd(
     db: Database,
@@ -100,6 +110,7 @@ def watch_cmd(
     agent: bool,
     agent_yes: bool,
     stale_days: int,
+    max_agent_cycles: int,
 ) -> None:
     """Monitor projects for stale work and blockers.
 
@@ -140,10 +151,14 @@ def watch_cmd(
     console.print()
     console.print(Rule("[nexus.title]nexus watch[/nexus.title]", style="cyan"))
     scope = "all projects" if all_projects else f"project #{projects[0].id} · {projects[0].name}"
+    agent_label = ""
+    if agent:
+        agent_label = " · AI agent enabled"
+        if max_agent_cycles > 0:
+            agent_label += f" (max {max_agent_cycles} cycles)"
     console.print(
         f"  Watching [bold]{scope}[/bold] · "
-        f"interval [bold]{interval}m[/bold]"
-        + (" · AI agent enabled" if agent else "")
+        f"interval [bold]{interval}m[/bold]{agent_label}"
     )
     console.print("  Press [bold]Ctrl-C[/bold] to stop.\n")
 
@@ -158,6 +173,7 @@ def watch_cmd(
     signal.signal(signal.SIGTERM, _stop)
 
     cycle = 0
+    agent_cycles_run = 0
     while _running:
         cycle += 1
         now = datetime.now(timezone.utc)
@@ -184,7 +200,15 @@ def watch_cmd(
 
         # ── Optional AI agent pass ────────────────────────────────────────────
         if agent and _running:
-            _run_agent_pass(db, projects, agent_yes)
+            if max_agent_cycles == 0 or agent_cycles_run < max_agent_cycles:
+                _run_agent_pass(db, projects, agent_yes)
+                agent_cycles_run += 1
+            elif agent_cycles_run == max_agent_cycles:
+                console.print(
+                    f"  [nexus.info]ℹ  AI agent paused — max {max_agent_cycles} "
+                    f"cycle(s) reached. Use --max-agent-cycles 0 for unlimited.[/nexus.info]\n"
+                )
+                agent_cycles_run += 1  # increment so this message only prints once
 
         # ── Sleep in 1-second ticks so Ctrl-C feels instant ──────────────────
         next_check = now + timedelta(minutes=interval)
