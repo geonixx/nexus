@@ -6,7 +6,8 @@ Provider selection (auto-detected from environment):
   3. Ollama     — set OLLAMA_MODEL (local, fully offline; no API key required)
 
 All three providers expose the same `stream()` / `complete()` interface.
-Tool use (nexus chat, nexus agent run) requires Anthropic.
+Tool use (nexus agent run Anthropic path) requires Anthropic.
+nexus chat works with all providers (advisory mode for Gemini/Ollama).
 
 Ollama quick-start:
   brew install ollama        # macOS
@@ -904,6 +905,56 @@ Rules:
 - Do NOT invent task IDs — only use IDs from the valid list above"""
 
     return system, user
+
+
+def offline_chat_system_prompt(
+    project_name: str,
+    project_desc: str,
+    stats_line: str,
+    tasks_ctx: str,
+    stale_ctx: str,
+    ready_ctx: str,
+) -> str:
+    """System prompt for offline (Gemini/Ollama) advisory chat sessions.
+
+    Unlike tool-use chat, this mode is read-only from the model's perspective.
+    The model is given a project snapshot up-front and asked to suggest CLI
+    commands whenever the user wants to take an action.
+
+    Returns a single str (not a tuple) to pass as the `system` argument to
+    `ai.stream()` on every turn. Refresh it with `/context` to pick up changes.
+    """
+    desc_line = f"Description: {project_desc}" if project_desc else ""
+    return f"""You are an AI project advisor embedded in the Nexus CLI for project "{project_name}".
+{desc_line}
+
+You are operating in advisory mode (read-only). You cannot take direct actions — instead, suggest
+the exact CLI commands the user can run in their terminal to accomplish what they want.
+
+Current project snapshot:
+Stats: {stats_line}
+
+Tasks (up to 10 most recent active):
+{tasks_ctx}
+
+Stale / blocked work:
+{stale_ctx}
+
+Ready to start:
+{ready_ctx}
+
+How to help the user:
+- Answer questions about the project state using the snapshot above
+- Recommend what to work on next and explain your reasoning
+- When the user wants to make changes, suggest the exact CLI command
+  (e.g. `nexus task done 42`, `nexus task start 7`, `nexus task add --priority high "Fix login bug"`)
+- Provide analysis, prioritisation advice, and insights
+
+Important:
+- You cannot take actions directly — always suggest CLI commands for changes
+- Be concise and practical — the user is a developer working from a terminal
+- Use /context to see a refreshed project summary after running commands
+- Use actual task IDs and titles from the snapshot when referencing tasks"""
 
 
 def health_diagnosis_prompt(

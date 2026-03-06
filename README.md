@@ -26,7 +26,8 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 - **Portfolio workspace** — health grades and cross-project priority queue across every project at once
 - **Security-first** — automatic file permission hardening, secret-in-config blocking, audit command
 - **Fully local** — single SQLite file, WAL mode for concurrent access, zero cloud, works offline
-- **728 tests, 0 warnings**
+- **Interactive advisory chat** — `nexus chat` works with all three providers; Gemini/Ollama get advisory mode (streaming REPL that suggests CLI commands); Anthropic gets full tool mode
+- **766 tests, 0 warnings**
 
 ---
 
@@ -218,10 +219,14 @@ nexus export markdown <project_id> --stdout  # pipe to other tools
 ### AI Chat
 
 ```bash
-nexus chat [project_id]                      # interactive AI session with tool use
+nexus chat [project_id]                      # interactive chat — all providers
 ```
 
-Claude reads your full project context and can take real actions: list tasks, update status, create tasks, log time, query stats. Use `/help` inside chat for slash commands.
+**Two modes depending on your active provider:**
+- **Anthropic** — full tool mode: Claude can list tasks, update status, create tasks, log time, query stats
+- **Gemini / Ollama** — advisory mode: streaming responses suggest the exact `nexus` CLI commands to run
+
+Slash commands in both modes: `/context` (refresh project snapshot), `/help`, `/exit`. Advisory mode only: `/clear` (reset conversation history for context management).
 
 ### AI Scrum Master
 
@@ -241,7 +246,7 @@ The agent reviews your project state, surfaces stale/blocked work, and can add n
 - **Anthropic** — full iterative tool-use loop; reads tasks on demand; broader action set
 - **Gemini / Ollama** — offline structured-output mode; full project snapshot in one prompt; returns a JSON action plan (`add_note` and `create_task` only); retries on parse failure
 
-`nexus chat` (interactive) still requires `ANTHROPIC_API_KEY`.
+`nexus chat` works with all three providers — Anthropic for full tool use, Gemini/Ollama for advisory mode.
 
 ### Watch Daemon
 
@@ -321,7 +326,7 @@ Nexus supports three AI providers, auto-selected in priority order:
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Required for `nexus chat` (interactive tool use) and the **full** `nexus agent run` tool-use loop. Get a key at [console.anthropic.com](https://console.anthropic.com/).
+Required for `nexus chat` **full tool mode** (real actions) and the **full** `nexus agent run` tool-use loop. Get a key at [console.anthropic.com](https://console.anthropic.com/).
 
 ### 2. Google Gemini (fallback — all non-tool features)
 
@@ -329,7 +334,7 @@ Required for `nexus chat` (interactive tool use) and the **full** `nexus agent r
 export GOOGLE_API_KEY=AIza...
 ```
 
-Works for suggestions, estimates, digests, reports. Does not support tool use. Get a key at [aistudio.google.com](https://aistudio.google.com/app/apikey).
+Works for suggestions, estimates, digests, reports, and `nexus chat` advisory mode. Does not support tool use. Get a key at [aistudio.google.com](https://aistudio.google.com/app/apikey).
 
 ### 3. Ollama (local — fully offline, zero cost)
 
@@ -340,7 +345,7 @@ ollama serve                # start the daemon (auto-starts on macOS)
 export OLLAMA_MODEL=llama3.2
 ```
 
-All streaming AI features work with Ollama. `nexus agent run` also works — it uses an offline structured-output mode (project snapshot in one prompt → JSON action plan). Only `nexus chat` (interactive tool use) still requires Anthropic. With Ollama, no data ever leaves your machine.
+All streaming AI features work with Ollama, including `nexus chat` (advisory mode) and `nexus agent run` (offline structured-output mode). With Ollama, no data ever leaves your machine — zero API cost, zero cloud.
 
 ```bash
 # Use a different model

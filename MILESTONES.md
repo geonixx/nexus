@@ -782,6 +782,81 @@ nexus agent run 1                # iterative tool calls, richer analysis
 
 ---
 
+## Milestone 19 — Offline Chat ✅ (complete)
+**Goal:** Make `nexus chat` work with Gemini and Ollama (advisory mode) — the last
+local-first gap.  Previously `nexus chat` required `ANTHROPIC_API_KEY` and exited
+with an error for any other provider.  Now all three providers are supported.
+
+Deliverables:
+- [x] **`offline_chat_system_prompt()`** added to `ai.py`
+  - Args: `project_name`, `project_desc`, `stats_line`, `tasks_ctx`, `stale_ctx`, `ready_ctx`
+  - Returns a single `str` (not a tuple) — the system prompt to pass to `ai.stream()` each turn
+  - Includes full project snapshot (stats, recent active tasks, stale/blocked work, ready tasks)
+  - Tells the model it is in "advisory mode" (read-only) and to suggest CLI commands for actions
+  - Gives example `nexus task done <id>`, `nexus task start <id>`, `nexus task add ...` forms
+- [x] **`_run_offline_chat(db, project_id, ai, project, stats, *, history_window=6)`** in `commands/chat.py`
+  - Streaming REPL loop (yields chunks directly from `ai.stream()` — no buffering)
+  - History windowing: last `history_window` exchange pairs prepended to each turn as:
+    ```
+    Conversation so far:
+    User: ...
+    Assistant: ...
+
+    Current message:
+    [new user input]
+    ```
+  - Slash commands: `/exit`, `/quit`, `/help`, `/context` (refresh snapshot + system), `/clear` (offline-only, resets history)
+  - `/context` calls `_build_offline_context(db, project_id)` (from `commands/agent.py`) to get a live snapshot, rebuilds the system prompt, and shows refreshed task counts
+  - `/clear` is only in the advisory-mode help text (tool-mode /help omits it)
+  - `RuntimeError` from `ai.stream()` displayed as error and breaks the loop cleanly
+  - Empty / whitespace input lines skipped (no AI call)
+  - `EOFError` / `KeyboardInterrupt` print "Goodbye!" and exit with code 0
+- [x] **`commands/chat.py` refactored**
+  - Removed hard `supports_tools` gate (previously printed error and raised `SystemExit(1)`)
+  - Existing Anthropic tool-use REPL extracted into `_run_tool_chat(db, project_id, ai, project)`
+  - New `_run_offline_chat(...)` added for Gemini / Ollama
+  - `chat_cmd` routes: `ai.supports_tools → _run_tool_chat(...)`, otherwise `_run_offline_chat(...)`
+  - Welcome banner updated: shows mode label — "Full tool mode" (Anthropic) or "Advisory mode" (Gemini/Ollama)
+  - Error message for no-AI updated to list all three provider env vars
+- [x] **`test_chat.py` updated**: `test_chat_gemini_only_exits_with_message` renamed and updated to
+  `test_chat_gemini_enters_advisory_mode` — expects exit_code 0 + "Advisory mode" in banner
+- [x] **37 new tests in `tests/test_chat_offline.py`** — **766 total**
+  - `TestOfflineChatSystemPrompt` (10) — returns str, project name, description, stats, tasks_ctx,
+    stale_ctx, ready_ctx, advisory language, nexus CLI commands, non-empty result
+  - `TestChatCmdRouting` (7) — no-AI exits, Gemini → advisory banner, Ollama → advisory banner,
+    Anthropic → "Full tool mode" banner, provider name shown, invalid project exits, EOF exits cleanly
+  - `TestRunOfflineChatSlashCommands` (7) — /exit + goodbye, /quit + goodbye, /help shows /clear,
+    /context shows stats, /clear shows "cleared", empty lines skipped, /clear absent from tool-mode /help
+  - `TestRunOfflineChatStreaming` (5) — chunks in output, user message in turn_user arg,
+    project name in system arg, RuntimeError breaks loop, slash commands don't call AI
+  - `TestRunOfflineChatHistory` (6) — first turn no history, second turn includes first exchange,
+    window=1 evicts old pairs, /clear resets history, history grows across turns,
+    /context preserves history
+  - `TestOfflineChatExported` (2) — importable from nexus.ai and nexus.commands.chat
+
+**Usage:**
+```bash
+# Advisory chat with Gemini (no Anthropic key required)
+export GOOGLE_API_KEY=...
+nexus chat 1                # advisory mode — streaming, suggests CLI commands
+
+# Advisory chat with Ollama (fully local, zero cost, zero cloud)
+export OLLAMA_MODEL=llama3.2
+nexus chat 1                # completely offline advisory chat
+
+# Anthropic path is unchanged (full tool-use, real actions)
+export ANTHROPIC_API_KEY=sk-ant-...
+nexus chat 1                # tool mode — can create tasks, update statuses, log time
+
+# Useful slash commands during chat
+/context      # refresh the project snapshot (run after you make changes)
+/clear        # reset conversation history (helps if responses start repeating)
+/help         # see all available commands
+/exit         # end the session
+```
+
+---
+
 ## Development Workflow
 
 ```bash

@@ -587,14 +587,28 @@ def test_chat_no_key_exits(runner, db_path, monkeypatch):
     assert result.exit_code == 1
 
 
-def test_chat_gemini_only_exits_with_message(runner, db_path, monkeypatch):
+def test_chat_gemini_enters_advisory_mode(runner, db_path, monkeypatch):
+    """M19: Gemini now works in advisory mode instead of erroring."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "goog-test")
 
+    from unittest.mock import MagicMock, patch
+
+    mock_ai = MagicMock()
+    mock_ai.available = True
+    mock_ai.supports_tools = False
+    mock_ai.provider_name = "Gemini"
+
     invoke(runner, db_path, "project", "new", "Proj")
-    result = invoke(runner, db_path, "chat", "1")
-    assert result.exit_code == 1
-    assert "ANTHROPIC_API_KEY" in result.output or "Anthropic" in result.output
+    with patch("nexus.ai.NexusAI", return_value=mock_ai):
+        result = runner.invoke(
+            cli,
+            ["--db", db_path, "chat", "1"],
+            input="/exit\n",
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    assert "Advisory mode" in result.output
 
 
 def test_chat_missing_project(runner, db_path, monkeypatch):

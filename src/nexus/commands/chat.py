@@ -1,16 +1,23 @@
 """Interactive AI chat for a Nexus project.
 
-`nexus chat [project_id]` opens a conversational session where Claude has
-full project context and can take real actions via tool use:
+`nexus chat [project_id]` opens a conversational session with full project
+context.  Two modes depending on the active AI provider:
 
-  - List / inspect tasks
-  - Create tasks
-  - Update task statuses (done, start, block, cancel)
-  - Log time to tasks
-  - Report project stats
+  Anthropic (ANTHROPIC_API_KEY):
+    Full tool mode — Claude can take real actions:
+    list / inspect tasks, create tasks, update statuses, log time, report stats.
 
-Type /exit (or Ctrl-C) to end the session.
-Tool use requires ANTHROPIC_API_KEY.
+  Gemini / Ollama (GOOGLE_API_KEY or OLLAMA_MODEL):
+    Advisory mode — read-only; the model answers questions and suggests the
+    exact `nexus` CLI commands to run for any action.
+
+Slash commands available in both modes:
+  /exit or /quit   End the session
+  /context         Refresh and show current project summary
+  /help            Show available commands
+
+Advisory-mode only:
+  /clear           Clear conversation history (manages context window)
 """
 
 from __future__ import annotations
@@ -180,66 +187,17 @@ Always use the provided tools when taking actions on tasks. After each action, \
 confirm what changed concisely. Be direct and practical."""
 
 
-@click.command("chat")
-@click.argument("project_id", type=int, required=False)
-@click.pass_obj
-def chat_cmd(db: Database, project_id: int | None):
-    """Start an interactive AI chat session for a project.
+def _run_tool_chat(db: Database, project_id: int, ai: object, project: object) -> None:
+    """Anthropic tool-use chat REPL.
 
-    Claude has full context about your project and can take real actions:
-    list tasks, create tasks, update statuses, log time.
-
-    \b
-    Commands during chat:
-      /exit or /quit   End the session
-      /context         Show current project summary
-      /help            Show available commands
-
-    Requires ANTHROPIC_API_KEY (tool use is Anthropic-only).
+    Requires ai.supports_tools == True (Anthropic provider only).
     """
     from rich.markdown import Markdown
-    from rich.rule import Rule
 
-    from ..ai import CHAT_TOOLS, NexusAI
-
-    # Resolve project_id — fall back to config default
-    if project_id is None:
-        cfg = load_config()
-        project_id = cfg.get("default_project")
-        if not project_id:
-            print_error("No project_id given and no default_project configured.")
-            print_info("Usage: nexus chat <project_id>")
-            print_info("       nexus config set default_project <id>")
-            raise SystemExit(1)
-
-    project = db.get_project(project_id)
-    if not project:
-        print_error(f"Project id={project_id} not found.")
-        raise SystemExit(1)
-
-    ai = NexusAI()
-    if not ai.available:
-        print_error("No AI provider configured. Set ANTHROPIC_API_KEY or GOOGLE_API_KEY.")
-        raise SystemExit(1)
-    if not ai.supports_tools:
-        print_error(
-            "Chat mode requires ANTHROPIC_API_KEY — tool use is not available with Gemini.\n"
-            "Set ANTHROPIC_API_KEY to enable nexus chat."
-        )
-        raise SystemExit(1)
+    from ..ai import CHAT_TOOLS
 
     system_prompt = _build_system_prompt(db, project_id)
     tool_handler = _make_tool_handler(db, project_id)
-    stats = db.project_stats(project_id)
-
-    # ── Welcome banner ────────────────────────────────────────────────────
-    console.print(Rule(f"[nexus.title]Nexus Chat · {project.name}[/nexus.title]", style="cyan"))
-    console.print(
-        f"  [dim]Provider: {ai.provider_name}  ·  "
-        f"{stats.total_tasks} tasks  ·  {stats.completion_pct:.0f}% complete[/dim]"
-    )
-    console.print("  [dim]Type [bold]/exit[/bold] to quit · [bold]/help[/bold] for commands[/dim]\n")
-
     messages: list[dict] = []
 
     while True:
@@ -269,7 +227,8 @@ def chat_cmd(db: Database, project_id: int | None):
 
         if cmd == "/context":
             s = db.project_stats(project_id)
-            console.print(Markdown(
+            from rich.markdown import Markdown as _Md
+            console.print(_Md(
                 f"**{project.name}** — {s.total_tasks} tasks, "
                 f"{s.done_tasks} done, {s.in_progress_tasks} in progress, "
                 f"{s.blocked_tasks} blocked. "
@@ -296,3 +255,190 @@ def chat_cmd(db: Database, project_id: int | None):
         console.print("\n[bold green]Nexus:[/bold green]")
         console.print(Markdown(response_text))
         console.print()
+
+
+def _run_offline_chat(
+    db: Database,
+    project_id: int,
+    ai: object,
+    project: object,
+    stats: object,
+    *,
+    history_window: int = 6,
+) -> None:
+    """Advisory-mode streaming chat REPL for Gemini/Ollama providers.
+
+    The model receives a project snapshot in the system prompt on every turn
+    and is asked to suggest CLI commands rather than take actions directly.
+
+    History is windowed to the last `history_window` exchange pairs to avoid
+    overflowing context limits on smaller local models.
+    """
+    from ..ai import offline_chat_system_prompt
+    from ..commands.agent import _build_offline_context
+
+    # Build initial project snapshot
+    ctx = _build_offline_context(db, project_id)
+
+    def _make_system() -> str:
+        return offline_chat_system_prompt(
+            project.name,
+            getattr(project, "description", "") or "",
+            ctx["stats_line"],
+            ctx["tasks_ctx"],
+            ctx["stale_ctx"],
+            ctx["ready_ctx"],
+        )
+
+    system = _make_system()
+
+    # History: list of (user_text, assistant_text) tuples
+    history: list[tuple[str, str]] = []
+
+    while True:
+        # ── Prompt ────────────────────────────────────────────────────────
+        try:
+            user_input = console.input("[bold cyan]You:[/bold cyan] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Goodbye![/dim]")
+            break
+
+        if not user_input:
+            continue
+
+        # ── Slash commands ────────────────────────────────────────────────
+        cmd = user_input.lower()
+        if cmd in ("/exit", "/quit"):
+            console.print("[dim]Goodbye![/dim]")
+            break
+
+        if cmd == "/help":
+            console.print(
+                "  [bold]/exit[/bold] or [bold]/quit[/bold]  — end session\n"
+                "  [bold]/context[/bold]           — refresh project summary\n"
+                "  [bold]/clear[/bold]             — clear conversation history\n"
+                "  [bold]/help[/bold]              — this message"
+            )
+            continue
+
+        if cmd == "/context":
+            # Refresh snapshot from the live DB
+            ctx.update(_build_offline_context(db, project_id))
+            system = _make_system()
+            s = db.project_stats(project_id)
+            console.print(
+                f"[dim]Context refreshed — {s.total_tasks} tasks, "
+                f"{s.done_tasks} done, {s.in_progress_tasks} in progress, "
+                f"{s.blocked_tasks} blocked. {s.completion_pct:.0f}% complete.[/dim]\n"
+            )
+            continue
+
+        if cmd == "/clear":
+            history.clear()
+            console.print("[dim]Conversation history cleared.[/dim]\n")
+            continue
+
+        # ── Build windowed turn string ─────────────────────────────────
+        window = history[-history_window:]
+        parts: list[str] = []
+        if window:
+            parts.append("Conversation so far:")
+            for u, a in window:
+                parts.append(f"User: {u}")
+                parts.append(f"Assistant: {a}")
+            parts.append("")
+        parts.append(f"Current message:\n{user_input}")
+        turn_user = "\n".join(parts)
+
+        # ── Stream the response ────────────────────────────────────────
+        console.print("\n[bold green]Nexus:[/bold green] ", end="")
+        chunks: list[str] = []
+        try:
+            for chunk in ai.stream(system, turn_user):
+                console.print(chunk, end="")
+                chunks.append(chunk)
+        except RuntimeError as e:
+            print_error(str(e))
+            break
+
+        console.print("\n")
+        response_text = "".join(chunks)
+        history.append((user_input, response_text))
+
+
+@click.command("chat")
+@click.argument("project_id", type=int, required=False)
+@click.pass_obj
+def chat_cmd(db: Database, project_id: int | None):
+    """Start an interactive AI chat session for a project.
+
+    \b
+    Anthropic (full tool mode):
+      Claude has full context and can take real actions:
+      list tasks, create tasks, update statuses, log time.
+
+    \b
+    Gemini / Ollama (advisory mode):
+      Read-only chat — answers questions and suggests the exact nexus CLI
+      commands to run for any action you want to take.
+
+    \b
+    Commands during chat:
+      /exit or /quit   End the session
+      /context         Refresh and show current project summary
+      /help            Show available commands
+      /clear           Clear history (advisory mode only)
+    """
+    from rich.rule import Rule
+
+    from ..ai import NexusAI
+
+    # Resolve project_id — fall back to config default
+    if project_id is None:
+        cfg = load_config()
+        project_id = cfg.get("default_project")
+        if not project_id:
+            print_error("No project_id given and no default_project configured.")
+            print_info("Usage: nexus chat <project_id>")
+            print_info("       nexus config set default_project <id>")
+            raise SystemExit(1)
+
+    project = db.get_project(project_id)
+    if not project:
+        print_error(f"Project id={project_id} not found.")
+        raise SystemExit(1)
+
+    ai = NexusAI()
+    if not ai.available:
+        print_error(
+            "No AI provider configured. "
+            "Set ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OLLAMA_MODEL."
+        )
+        raise SystemExit(1)
+
+    stats = db.project_stats(project_id)
+    mode_label = "Full tool mode" if ai.supports_tools else "Advisory mode"
+
+    # ── Welcome banner ─────────────────────────────────────────────────────
+    console.print(Rule(f"[nexus.title]Nexus Chat · {project.name}[/nexus.title]", style="cyan"))
+    console.print(
+        f"  [dim]Provider: {ai.provider_name}  ·  {mode_label}  ·  "
+        f"{stats.total_tasks} tasks  ·  {stats.completion_pct:.0f}% complete[/dim]"
+    )
+    if ai.supports_tools:
+        console.print(
+            "  [dim]Type [bold]/exit[/bold] to quit · [bold]/help[/bold] for commands[/dim]\n"
+        )
+    else:
+        console.print(
+            "  [dim]Advisory mode: I'll answer questions and suggest CLI commands.[/dim]"
+        )
+        console.print(
+            "  [dim]Type [bold]/exit[/bold] to quit · [bold]/help[/bold] for commands[/dim]\n"
+        )
+
+    # ── Route to the right chat loop ───────────────────────────────────────
+    if ai.supports_tools:
+        _run_tool_chat(db, project_id, ai, project)
+    else:
+        _run_offline_chat(db, project_id, ai, project, stats)
