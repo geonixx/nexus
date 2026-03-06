@@ -15,7 +15,6 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 ## Features
 
 - **Full project management** — projects, sprints, tasks, time logging, priorities
-- **Task dependencies** — declare prerequisites, detect cycles, visualise the DAG
 - **AI-powered intelligence** — task suggestions, estimates, health diagnosis, interactive chat (Claude / Gemini / Ollama)
 - **AI scrum master** — autonomous agent reviews your project, surfaces blockers, adds notes, creates tasks (`nexus agent run`); works with Anthropic (tool-use), Gemini, and Ollama (offline structured-output mode)
 - **Local AI (Ollama)** — run every AI feature fully offline with any local model; zero API cost, zero data sent to the cloud (`OLLAMA_MODEL=llama3.2`); offline agent path works with Gemini and Ollama too
@@ -462,15 +461,30 @@ src/nexus/
 
 ## Roadmap
 
+### Shipped
 - [x] `nexus watch` — background daemon for stale detection + AI agent scheduling
 - [x] Slack bridge — slash command server with Block Kit and async AI review
 - [x] Tags / labels — free-form task labels with cross-project search
 - [x] SQLite WAL mode — concurrent multi-agent read/write access
 - [x] Ollama provider — fully local AI; zero cloud, zero cost, zero latency tax
-- [ ] Web UI (read-only dashboard, served locally)
-- [ ] Multi-user sync via git (collaborative local-first)
-- [ ] Recurring tasks
-- [ ] Plugin system for custom integrations
+- [x] Offline agent — Gemini/Ollama structured-output action plan + retry loop
+- [x] Offline chat — advisory streaming REPL for Gemini/Ollama providers
+- [x] Claude Code integration — `nexus claude-init` generates a CLAUDE.md task workflow snippet
+
+### Upcoming
+- [ ] **M21 · Task dependencies** — declare prerequisites, detect cycles, visualise the DAG;
+  `task next` respects the graph; AI context includes full dependency state so the agent
+  can reason about order without hallucinating the critical path
+- [ ] **M22 · AI sprint planner** — `nexus sprint plan` uses the dependency graph + priorities +
+  estimates to suggest a coherent, achievable sprint; works with all three AI providers
+- [ ] **M23 · Velocity analytics** — throughput charts, estimate accuracy, task cycle time;
+  weekly/monthly breakdowns rendered with Rich ASCII charts
+
+### Ideas backlog
+- Web UI (read-only dashboard, served locally)
+- Multi-user sync via git (collaborative local-first)
+- Recurring tasks
+- Plugin system for custom integrations
 
 ---
 
