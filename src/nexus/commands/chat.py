@@ -288,6 +288,7 @@ def _run_offline_chat(
             ctx["tasks_ctx"],
             ctx["stale_ctx"],
             ctx["ready_ctx"],
+            ctx.get("deps_ctx", ""),
         )
 
     system = _make_system()

@@ -632,11 +632,16 @@ class Database:
 
         Returns True on success, False if:
         * either task does not exist,
+        * the tasks are in different projects (cross-project deps unsupported),
         * the dependency already exists (idempotent),
         * or it would create a circular dependency.
         """
-        if not self.get_task(task_id) or not self.get_task(depends_on_id):
+        task = self.get_task(task_id)
+        dep_task = self.get_task(depends_on_id)
+        if not task or not dep_task:
             return False
+        if task.project_id != dep_task.project_id:
+            return False  # cross-project dependencies are not supported
         if self._would_create_cycle(task_id, depends_on_id):
             return False
         now = datetime.now(timezone.utc).isoformat()
@@ -722,6 +727,34 @@ class Database:
                 (task_id,),
             ).fetchone()
         return row is not None
+
+    def get_dependency_graph(self, project_id: int) -> dict[int, list[int]]:
+        """Return the full adjacency list for a project's dependency graph.
+
+        Returns {task_id: [dep_id, ...]} for every task in the project.
+        Tasks with no dependencies map to an empty list.  Cross-project edges
+        (which should not exist) are silently excluded.
+
+        Uses two queries instead of N+1 to keep dashboards and AI-context
+        builds fast regardless of project size.
+        """
+        tasks = self.list_tasks(project_id=project_id)
+        graph: dict[int, list[int]] = {t.id: [] for t in tasks}
+        task_ids = set(graph.keys())
+        if not task_ids:
+            return graph
+        placeholders = ",".join("?" * len(task_ids))
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT task_id, depends_on_id FROM task_dependencies"
+                f" WHERE task_id IN ({placeholders})"
+                f" ORDER BY task_id, depends_on_id",
+                list(task_ids),
+            ).fetchall()
+        for row in rows:
+            if row["depends_on_id"] in task_ids:  # only intra-project edges
+                graph[row["task_id"]].append(row["depends_on_id"])
+        return graph
 
     # ── Health / Staleness ────────────────────────────────────────────────
 

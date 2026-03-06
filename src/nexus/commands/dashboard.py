@@ -35,8 +35,12 @@ _PRIORITY_ORDER = {
 }
 
 
-def _task_card(task: Task) -> Panel:
-    """Render a single task as a small Rich Panel card."""
+def _task_card(task: Task, dep_ids: list[int] | None = None) -> Panel:
+    """Render a single task as a small Rich Panel card.
+
+    dep_ids: IDs of open (non-done) prerequisites. When provided, appended
+             to the card body so users can see what is blocking the task.
+    """
     status_style = STATUS_STYLES.get(task.status, "white")
     pri_icon = PRIORITY_ICONS.get(task.priority, "")
     pri_style = PRIORITY_STYLES.get(task.priority, "white")
@@ -51,13 +55,27 @@ def _task_card(task: Task) -> Panel:
         body.append(f"  est {task.estimate_hours:.0f}h", style="dim")
     if task.actual_hours:
         body.append(f"  act {task.actual_hours:.1f}h", style="cyan dim")
+    # M21: show open prerequisite IDs so users know what to finish first
+    if dep_ids:
+        dep_str = " ".join(f"#{d}" for d in dep_ids)
+        body.append(f"\ndeps: {dep_str}", style="dim")
 
     border = status_style if status_style else "bright_black"
     return Panel(body, title=title_text, title_align="left", border_style=border, width=30, padding=(0, 1))
 
 
-def _kanban_column(title: str, tasks: List[Task], style: str, icon: str) -> Panel:
-    """Render a vertical kanban column of task cards."""
+def _kanban_column(
+    title: str,
+    tasks: List[Task],
+    style: str,
+    icon: str,
+    dep_map: dict[int, list[int]] | None = None,
+) -> Panel:
+    """Render a vertical kanban column of task cards.
+
+    dep_map: {task_id: [open_dep_id, ...]} — when provided, open dep IDs are
+             shown in the card so users can see what is blocking each task.
+    """
     header = Text()
     header.append(f"{icon}  {title}", style=style)
     header.append(f"  {len(tasks)}", style="dim")
@@ -66,7 +84,11 @@ def _kanban_column(title: str, tasks: List[Task], style: str, icon: str) -> Pane
         content: object = Align(Text("empty", style="dim italic"), align="center")
     else:
         sorted_tasks = sorted(tasks, key=lambda t: _PRIORITY_ORDER.get(t.priority, 0), reverse=True)
-        content = Group(*[_task_card(t) for t in sorted_tasks])
+        cards = []
+        for t in sorted_tasks:
+            dep_ids = dep_map.get(t.id) if dep_map else None
+            cards.append(_task_card(t, dep_ids=dep_ids))
+        content = Group(*cards)
 
     return Panel(
         content,
@@ -155,6 +177,19 @@ def dashboard_cmd(db: Database, project_id: int):
     )
     sprint_done = sum(1 for t in sprint_tasks if t.status == Status.DONE)
 
+    # M21: precompute open-dep map for the TODO column (two queries, not N+1)
+    task_map = {t.id: t for t in tasks}
+    full_dep_graph = db.get_dependency_graph(project_id)
+    open_dep_map: dict[int, list[int]] = {}
+    for tid, dep_ids in full_dep_graph.items():
+        open_deps = [
+            did for did in dep_ids
+            if did in task_map
+            and task_map[did].status not in (Status.DONE, Status.CANCELLED)
+        ]
+        if open_deps:
+            open_dep_map[tid] = open_deps
+
     # ── Header ────────────────────────────────────────────────────────────
     title = Text()
     title.append("NEXUS", style="bold cyan")
@@ -181,7 +216,10 @@ def dashboard_cmd(db: Database, project_id: int):
 
     board = Columns(
         [
-            _kanban_column("TODO", todo, STATUS_STYLES[Status.TODO], STATUS_ICONS[Status.TODO]),
+            _kanban_column(
+                "TODO", todo, STATUS_STYLES[Status.TODO], STATUS_ICONS[Status.TODO],
+                dep_map=open_dep_map,  # M21: show open dep IDs in TODO cards
+            ),
             _kanban_column("IN PROGRESS", in_prog, STATUS_STYLES[Status.IN_PROGRESS], STATUS_ICONS[Status.IN_PROGRESS]),
             _kanban_column("DONE", done, STATUS_STYLES[Status.DONE], STATUS_ICONS[Status.DONE]),
             _kanban_column("BLOCKED", blocked, STATUS_STYLES[Status.BLOCKED], STATUS_ICONS[Status.BLOCKED]),

@@ -385,7 +385,7 @@ def _build_offline_context(db: Database, project_id: int) -> dict:
     """Gather project data for the offline (single-prompt) agent path.
 
     Returns a dict with keys: stats_line, tasks_ctx, stale_ctx, ready_ctx,
-    valid_task_ids.
+    deps_ctx, valid_task_ids.
     """
     tasks = db.list_tasks(project_id=project_id)
     total = len(tasks)
@@ -446,11 +446,30 @@ def _build_offline_context(db: Database, project_id: int) -> dict:
 
     valid_task_ids = [t.id for t in tasks]
 
+    # M21: dependency chain summary so AI can reason about task ordering
+    dep_graph = db.get_dependency_graph(project_id)
+    task_map_for_deps = {t.id: t for t in tasks}
+    dep_parts: list[str] = []
+    for t in tasks:
+        if t.status.value in ("done", "cancelled"):
+            continue
+        open_deps = [
+            task_map_for_deps[did]
+            for did in dep_graph.get(t.id, [])
+            if did in task_map_for_deps
+            and task_map_for_deps[did].status.value not in ("done", "cancelled")
+        ]
+        if open_deps:
+            dep_strs = ", ".join(f"#{d.id} ({d.status.value})" for d in open_deps)
+            dep_parts.append(f"  #{t.id} '{t.title}' needs: {dep_strs}")
+    deps_ctx = "\n".join(dep_parts[:10]) if dep_parts else "(no blocked dependency chains)"
+
     return {
         "stats_line": stats_line,
         "tasks_ctx": tasks_ctx,
         "stale_ctx": stale_ctx,
         "ready_ctx": ready_ctx,
+        "deps_ctx": deps_ctx,
         "valid_task_ids": valid_task_ids,
     }
 
@@ -554,6 +573,7 @@ def _run_offline_agent(
         tasks_ctx=ctx["tasks_ctx"],
         stale_ctx=ctx["stale_ctx"],
         ready_ctx=ctx["ready_ctx"],
+        deps_ctx=ctx["deps_ctx"],
         valid_task_ids=ctx["valid_task_ids"],
     )
 

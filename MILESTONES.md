@@ -782,6 +782,80 @@ nexus agent run 1                # iterative tool calls, richer analysis
 
 ---
 
+## Milestone 21 — Task Dependencies ✅ (complete)
+**Goal:** Promote the M11 dependency foundation into a first-class feature: a clean
+`nexus task dep` subgroup, dep-aware `task next`, dep indicators on the dashboard,
+and dep context injected into all AI prompts so the agent can reason about task
+ordering without hallucinating the critical path.
+
+Deliverables:
+- [x] **`Task.depends_on: list[int]`** field in `models.py`
+  - Default empty list; populated on-demand by callers, not stored in `tasks` table
+  - Additive: all existing code that constructs `Task` objects is unaffected
+- [x] **`Database.add_dependency` hardened** with same-project validation
+  - Returns `False` (instead of succeeding silently) when tasks are in different projects
+  - Existing cross-project queries never existed in practice; test coverage added
+- [x] **`Database.get_dependency_graph(project_id) -> dict[int, list[int]]`** — new method
+  - Returns full adjacency list for the project in two queries (not N+1)
+  - Intra-project edges only; cross-project edges silently excluded
+  - Used by dashboard and AI context builder for efficient bulk access
+- [x] **`nexus task dep` subgroup** with three subcommands (`commands/task.py`)
+  - `dep add <task_id> <dep_id>` — pre-validates same project, self-dep, cycle, idempotency
+  - `dep remove <task_id> <dep_id>` — removes the edge; errors if none exists
+  - `dep list <task_id>` — Rich table showing prerequisites + dependents with status icons
+  - Original `nexus task depend` / `nexus task undepend` unchanged (backward compatible)
+- [x] **`nexus task next` is now dep-aware**
+  - Todo tasks with any unmet (non-done, non-cancelled) deps are filtered out
+  - In-progress and blocked tasks shown regardless (already committed)
+  - Footer reports count of dep-blocked tasks + hint to run `nexus task graph`
+  - Zero-result message includes dep-blocked count when that's why nothing is shown
+- [x] **Dashboard dep indicators** (`commands/dashboard.py`)
+  - `_task_card` gains optional `dep_ids: list[int] | None = None` parameter
+  - `_kanban_column` gains optional `dep_map: dict[int, list[int]] | None = None`
+  - `dashboard_cmd` precomputes open-dep map via `get_dependency_graph` (two queries)
+  - TODO column cards show `deps: #X #Y` for tasks with open prerequisites
+  - Done/cancelled deps not shown (they are resolved, not blocking)
+  - IN PROGRESS and other columns unchanged
+- [x] **AI context enhanced with dependency data**
+  - `_build_offline_context` in `agent.py` builds `deps_ctx` string from dep graph
+  - Lists tasks with their open prerequisites: `#5 'Deploy' needs: #3 (todo)`
+  - Capped at 10 entries for context window safety; "(no blocked dependency chains)" if clean
+  - `offline_agent_prompt()` and `offline_chat_system_prompt()` gain `deps_ctx: str = ""`
+  - Both call sites updated (`agent.py` and `chat.py`)
+- [x] **46 tests** in `tests/test_task_deps.py` — **843 total** (+1 existing test updated)
+  - `TestSameProjectValidation` (3) — DB guard + CLI error message
+  - `TestTaskDependsOnField` (3) — default, set, model_dump
+  - `TestGetDependencyGraph` (5) — empty, no-deps, single edge, cross-project exclusion, diamond
+  - `TestTaskDepAddCLI` (8) — success, message, idempotent, self-dep, missing, cycle, cross-project
+  - `TestTaskDepRemoveCLI` (5) — success, message, nonexistent, missing task, missing dep
+  - `TestTaskDepListCLI` (5) — no-deps, prerequisites, dependents, done-dep, missing task
+  - `TestTaskNextDepFiltering` (6) — excluded, satisfied included, in-progress always shown, footer count, all-blocked message, tag+dep filter
+  - `TestDashboardDepIndicators` (5) — no indicator, open dep shown, done dep hidden, multiple, in-progress no indicator
+  - `TestAIContextDeps` (4) — agent prompt, chat prompt, no chains message, chains listed
+  - `TestTaskDepGroupHelp` (2) — group exists, subcommands listed
+
+**Usage:**
+```bash
+# Add a prerequisite
+nexus task dep add 5 3         # task 5 cannot start until task 3 is done
+
+# Remove a prerequisite
+nexus task dep remove 5 3
+
+# Show deps for a task (prerequisites + what depends on it)
+nexus task dep list 5
+
+# task next now respects deps — dep-blocked tasks are excluded
+nexus task next 1
+# → shows only tasks that are actually startable
+# → footer: "2 waiting on deps (nexus task graph 1)"
+
+# See the full dep graph (existing M11 command, unchanged)
+nexus task graph 1
+```
+
+---
+
 ## Milestone 20 — Claude Code Integration ✅ (complete)
 **Goal:** Wire Nexus into Claude Code via a generated `CLAUDE.md` snippet.  A single
 command — `nexus claude-init` — produces a ready-to-paste (or file-written) Markdown

@@ -308,7 +308,7 @@ class TestParseOfflinePlan:
 class TestBuildOfflineContext:
     def test_returns_expected_keys(self, db, project, tasks):
         ctx = _build_offline_context(db, project.id)
-        assert set(ctx) == {"stats_line", "tasks_ctx", "stale_ctx", "ready_ctx", "valid_task_ids"}
+        assert set(ctx) == {"stats_line", "tasks_ctx", "stale_ctx", "ready_ctx", "deps_ctx", "valid_task_ids"}
 
     def test_stats_line_reflects_counts(self, db, project, tasks):
         ctx = _build_offline_context(db, project.id)

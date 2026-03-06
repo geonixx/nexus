@@ -15,6 +15,7 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 ## Features
 
 - **Full project management** — projects, sprints, tasks, time logging, priorities
+- **Task dependencies** — `nexus task dep add/remove/list`; cycle detection; dep-aware `task next` (dep-blocked tasks excluded); dashboard shows open prerequisites; AI context includes the full dep graph so the agent can reason about ordering without hallucinating the critical path
 - **AI-powered intelligence** — task suggestions, estimates, health diagnosis, interactive chat (Claude / Gemini / Ollama)
 - **AI scrum master** — autonomous agent reviews your project, surfaces blockers, adds notes, creates tasks (`nexus agent run`); works with Anthropic (tool-use), Gemini, and Ollama (offline structured-output mode)
 - **Local AI (Ollama)** — run every AI feature fully offline with any local model; zero API cost, zero data sent to the cloud (`OLLAMA_MODEL=llama3.2`); offline agent path works with Gemini and Ollama too
@@ -27,7 +28,7 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 - **Fully local** — single SQLite file, WAL mode for concurrent access, zero cloud, works offline
 - **Interactive advisory chat** — `nexus chat` works with all three providers; Gemini/Ollama get advisory mode (streaming REPL that suggests CLI commands); Anthropic gets full tool mode
 - **Claude Code integration** — `nexus claude-init` generates a ready-to-use `CLAUDE.md` snippet that wires Claude Code into your task tracker: check tasks before starting, log time when done, explicit forbidden-command list
-- **797 tests, 0 warnings**
+- **843 tests, 0 warnings**
 
 ---
 
@@ -472,9 +473,8 @@ src/nexus/
 - [x] Claude Code integration — `nexus claude-init` generates a CLAUDE.md task workflow snippet
 
 ### Upcoming
-- [ ] **M21 · Task dependencies** — declare prerequisites, detect cycles, visualise the DAG;
-  `task next` respects the graph; AI context includes full dependency state so the agent
-  can reason about order without hallucinating the critical path
+- [x] **M21 · Task dependencies** — `nexus task dep add/remove/list`; cycle detection;
+  dep-aware `task next`; dashboard dep indicators; AI context includes full dep graph
 - [ ] **M22 · AI sprint planner** — `nexus sprint plan` uses the dependency graph + priorities +
   estimates to suggest a coherent, achievable sprint; works with all three AI providers
 - [ ] **M23 · Velocity analytics** — throughput charts, estimate accuracy, task cycle time;

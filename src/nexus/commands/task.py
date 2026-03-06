@@ -560,15 +560,31 @@ def task_next(db: Database, project_id: int | None, count: int, tag: str | None)
     }
 
     active = [t for t in all_tasks if t.status == Status.IN_PROGRESS]
-    todo = [t for t in all_tasks if t.status == Status.TODO]
     blocked_tasks = [t for t in all_tasks if t.status == Status.BLOCKED]
 
-    # Sort todo: highest priority first, oldest created first within same priority
-    todo.sort(key=lambda t: (-PRIORITY_WEIGHT.get(t.priority, 0), t.created_at or ""))
+    # M21: split todo into ready (no unmet deps) and dep-blocked
+    todo_all = [t for t in all_tasks if t.status == Status.TODO]
+    todo_ready: list = []
+    dep_blocked_count = 0
+    for t in todo_all:
+        if db.has_unmet_dependencies(t.id):
+            dep_blocked_count += 1
+        else:
+            todo_ready.append(t)
 
-    candidates = active + todo + blocked_tasks
+    # Sort ready todo: highest priority first, oldest created first within same priority
+    todo_ready.sort(key=lambda t: (-PRIORITY_WEIGHT.get(t.priority, 0), t.created_at or ""))
+
+    candidates = active + todo_ready + blocked_tasks
     if not candidates:
-        print_info(f"No actionable tasks in '{project.name}'.")
+        if dep_blocked_count:
+            print_info(
+                f"No actionable tasks in '{project.name}'. "
+                f"({dep_blocked_count} task(s) waiting on dependencies — "
+                f"use [bold]nexus task graph {project_id}[/bold] to see the dep tree)"
+            )
+        else:
+            print_info(f"No actionable tasks in '{project.name}'.")
         return
 
     console.print(Rule(f"[nexus.title]Next up · {project.name}[/nexus.title]", style="cyan"))
@@ -592,8 +608,15 @@ def task_next(db: Database, project_id: int | None, count: int, tag: str | None)
             line.append(f"  {t.estimate_hours}h", style="dim")
         console.print(line)
 
+    footer_parts = []
     if len(candidates) > count:
-        console.print(f"\n  [dim]…and {len(candidates) - count} more tasks[/dim]")
+        footer_parts.append(f"…and {len(candidates) - count} more tasks")
+    if dep_blocked_count:
+        footer_parts.append(
+            f"{dep_blocked_count} waiting on deps (nexus task graph {project_id})"
+        )
+    if footer_parts:
+        console.print(f"\n  [dim]{' · '.join(footer_parts)}[/dim]")
     console.print()
 
 
@@ -906,6 +929,166 @@ def task_undepend(db: Database, task_id: int, dep_id: int):
     else:
         print_error(f"No dependency from #{task_id} on #{dep_id} found.")
         raise SystemExit(1)
+
+
+# ── nexus task dep — subgroup ─────────────────────────────────────────────────
+
+
+@task_cmd.group("dep")
+def task_dep():
+    """Manage task dependencies (add, remove, list).
+
+    \b
+    Quick examples:
+      nexus task dep add 5 3       # task 5 cannot start until task 3 is done
+      nexus task dep remove 5 3    # remove that prerequisite
+      nexus task dep list 5        # show all deps for task 5
+    """
+
+
+@task_dep.command("add")
+@click.argument("task_id", type=int)
+@click.argument("dep_id", type=int)
+@click.pass_obj
+def task_dep_add(db: Database, task_id: int, dep_id: int):
+    """Declare that TASK_ID depends on DEP_ID (DEP_ID must be done first).
+
+    \b
+    Example:
+      nexus task dep add 5 3   # task 5 cannot start until task 3 is done
+    """
+    if task_id == dep_id:
+        print_error("A task cannot depend on itself.")
+        raise SystemExit(1)
+
+    task = db.get_task(task_id)
+    if not task:
+        print_error(f"Task id={task_id} not found.")
+        raise SystemExit(1)
+
+    dep_task = db.get_task(dep_id)
+    if not dep_task:
+        print_error(f"Dependency task id={dep_id} not found.")
+        raise SystemExit(1)
+
+    if task.project_id != dep_task.project_id:
+        print_error(
+            f"Tasks are in different projects "
+            f"(#{task_id} → project {task.project_id}, "
+            f"#{dep_id} → project {dep_task.project_id}). "
+            "Cross-project dependencies are not supported."
+        )
+        raise SystemExit(1)
+
+    # Idempotency check before calling add_dependency
+    existing_dep_ids = {d.id for d in db.get_dependencies(task_id)}
+    if dep_id in existing_dep_ids:
+        print_info(f"#{dep_id} is already a dependency of #{task_id} — nothing changed.")
+        return
+
+    ok = db.add_dependency(task_id, dep_id)
+    if ok:
+        print_success(
+            f"Task [bold]#{task_id}[/bold] '{task.title}' "
+            f"now depends on [bold]#{dep_id}[/bold] '{dep_task.title}'"
+        )
+    else:
+        # Only remaining reason is cycle detection
+        console.print(
+            f"  [yellow]Cannot add dependency: would create a circular dependency "
+            f"(#{dep_id} already depends on #{task_id} transitively).[/yellow]"
+        )
+        raise SystemExit(1)
+
+
+@task_dep.command("remove")
+@click.argument("task_id", type=int)
+@click.argument("dep_id", type=int)
+@click.pass_obj
+def task_dep_remove(db: Database, task_id: int, dep_id: int):
+    """Remove the prerequisite dependency from TASK_ID on DEP_ID.
+
+    \b
+    Example:
+      nexus task dep remove 5 3   # task 5 no longer requires task 3
+    """
+    if not db.get_task(task_id):
+        print_error(f"Task id={task_id} not found.")
+        raise SystemExit(1)
+    dep_task = db.get_task(dep_id)
+    if not dep_task:
+        print_error(f"Dependency task id={dep_id} not found.")
+        raise SystemExit(1)
+    removed = db.remove_dependency(task_id, dep_id)
+    if removed:
+        print_success(
+            f"Removed dependency: #{task_id} no longer requires "
+            f"#{dep_id} '{dep_task.title}'"
+        )
+    else:
+        print_error(f"No dependency from #{task_id} on #{dep_id} exists.")
+        raise SystemExit(1)
+
+
+@task_dep.command("list")
+@click.argument("task_id", type=int)
+@click.pass_obj
+def task_dep_list(db: Database, task_id: int):
+    """Show all dependencies for TASK_ID.
+
+    Displays prerequisites (what must be done first) and dependents
+    (tasks that are waiting on this task).
+
+    \b
+    Example:
+      nexus task dep list 5
+    """
+    task = db.get_task(task_id)
+    if not task:
+        print_error(f"Task id={task_id} not found.")
+        raise SystemExit(1)
+
+    deps = db.get_dependencies(task_id)
+    dependents = db.get_dependents(task_id)
+
+    console.print(f"\n  Task [bold]#{task_id}[/bold] '{task.title}'\n")
+
+    # Prerequisites table
+    console.print("  [dim]Prerequisites (must be done before this task):[/dim]")
+    if deps:
+        tbl = Table(box=box.SIMPLE, show_header=True, header_style="dim", expand=False)
+        tbl.add_column("ID", style="dim", justify="right", width=5)
+        tbl.add_column("Status", width=12)
+        tbl.add_column("Priority", width=10)
+        tbl.add_column("Title")
+        for d in deps:
+            icon = STATUS_ICONS.get(d.status, "○")
+            if d.status == Status.DONE:
+                status_str = f"[green]{icon} {d.status.value}[/green]"
+            elif d.status == Status.CANCELLED:
+                status_str = f"[dim]{icon} {d.status.value}[/dim]"
+            else:
+                status_str = f"{icon} {d.status.value}"
+            tbl.add_row(str(d.id), status_str, d.priority.value, d.title)
+        console.print(tbl)
+    else:
+        console.print("  [dim]  (none — this task has no prerequisites)[/dim]\n")
+
+    # Dependents table
+    console.print("  [dim]Dependents (tasks waiting on this task):[/dim]")
+    if dependents:
+        tbl2 = Table(box=box.SIMPLE, show_header=True, header_style="dim", expand=False)
+        tbl2.add_column("ID", style="dim", justify="right", width=5)
+        tbl2.add_column("Status", width=12)
+        tbl2.add_column("Priority", width=10)
+        tbl2.add_column("Title")
+        for d in dependents:
+            icon = STATUS_ICONS.get(d.status, "○")
+            tbl2.add_row(str(d.id), f"{icon} {d.status.value}", d.priority.value, d.title)
+        console.print(tbl2)
+    else:
+        console.print("  [dim]  (none — nothing depends on this task)[/dim]")
+    console.print()
 
 
 @task_cmd.command("graph")

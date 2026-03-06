@@ -64,6 +64,8 @@ class Task(BaseModel):
     # External provenance — e.g. GitHub issue sync
     source: str = ""       # "github" | "" for local tasks
     external_id: str = ""  # e.g. "42" for GitHub issue #42
+    # M21: IDs of tasks this task depends on (populated on-demand, NOT stored in tasks table)
+    depends_on: list[int] = Field(default_factory=list)
 
 
 class TimeEntry(BaseModel):

@@ -844,6 +844,7 @@ def offline_agent_prompt(
     stale_ctx: str,
     ready_ctx: str,
     valid_task_ids: list[int],
+    deps_ctx: str = "",
 ) -> tuple[str, str]:
     """Prompt for offline (Gemini/Ollama) agent review — returns a JSON action plan.
 
@@ -881,6 +882,9 @@ Stale / blocked work:
 Ready to start:
 {ready_ctx}
 
+Task dependency chains (tasks blocked by incomplete prerequisites):
+{deps_ctx}
+
 Valid task IDs in this project: [{id_list}]
 
 Return exactly this JSON structure (no other text):
@@ -914,6 +918,7 @@ def offline_chat_system_prompt(
     tasks_ctx: str,
     stale_ctx: str,
     ready_ctx: str,
+    deps_ctx: str = "",
 ) -> str:
     """System prompt for offline (Gemini/Ollama) advisory chat sessions.
 
@@ -942,6 +947,9 @@ Stale / blocked work:
 
 Ready to start:
 {ready_ctx}
+
+Task dependency chains (tasks blocked by incomplete prerequisites):
+{deps_ctx}
 
 How to help the user:
 - Answer questions about the project state using the snapshot above
