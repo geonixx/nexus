@@ -17,8 +17,8 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 - **Full project management** — projects, sprints, tasks, time logging, priorities
 - **Task dependencies** — declare prerequisites, detect cycles, visualise the DAG
 - **AI-powered intelligence** — task suggestions, estimates, health diagnosis, interactive chat (Claude / Gemini / Ollama)
-- **AI scrum master** — autonomous agent reviews your project, surfaces blockers, adds notes, creates tasks (`nexus agent run`)
-- **Local AI (Ollama)** — run every AI feature fully offline with any local model; zero API cost, zero data sent to the cloud (`OLLAMA_MODEL=llama3.2`)
+- **AI scrum master** — autonomous agent reviews your project, surfaces blockers, adds notes, creates tasks (`nexus agent run`); works with Anthropic (tool-use), Gemini, and Ollama (offline structured-output mode)
+- **Local AI (Ollama)** — run every AI feature fully offline with any local model; zero API cost, zero data sent to the cloud (`OLLAMA_MODEL=llama3.2`); offline agent path works with Gemini and Ollama too
 - **Tags / labels** — free-form tags on any task; filter by tag across sprints, next-queue, and search (`nexus tag`)
 - **Watch daemon** — background monitor that polls for stale work and can trigger the AI agent on a schedule (`nexus watch`)
 - **Slack bridge** — slash command server with Block Kit formatting, signature verification, and async AI review (`nexus slack serve`)
@@ -26,7 +26,7 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 - **Portfolio workspace** — health grades and cross-project priority queue across every project at once
 - **Security-first** — automatic file permission hardening, secret-in-config blocking, audit command
 - **Fully local** — single SQLite file, WAL mode for concurrent access, zero cloud, works offline
-- **662 tests, 0 warnings**
+- **728 tests, 0 warnings**
 
 ---
 
@@ -235,7 +235,13 @@ nexus agent run [project_id] --dry-run       # show what agent would do, no writ
 nexus agent run [project_id] --yes           # auto-approve all write actions
 ```
 
-The agent reads your project state, calls tools autonomously, surfaces stale/blocked work, and can add notes or create tasks without you driving every step. Requires `ANTHROPIC_API_KEY`.
+The agent reviews your project state, surfaces stale/blocked work, and can add notes or create tasks.
+
+**Two agent modes depending on the active AI provider:**
+- **Anthropic** — full iterative tool-use loop; reads tasks on demand; broader action set
+- **Gemini / Ollama** — offline structured-output mode; full project snapshot in one prompt; returns a JSON action plan (`add_note` and `create_task` only); retries on parse failure
+
+`nexus chat` (interactive) still requires `ANTHROPIC_API_KEY`.
 
 ### Watch Daemon
 
@@ -315,7 +321,7 @@ Nexus supports three AI providers, auto-selected in priority order:
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Required for `nexus chat` and `nexus agent run` (tool use). Get a key at [console.anthropic.com](https://console.anthropic.com/).
+Required for `nexus chat` (interactive tool use) and the **full** `nexus agent run` tool-use loop. Get a key at [console.anthropic.com](https://console.anthropic.com/).
 
 ### 2. Google Gemini (fallback — all non-tool features)
 
@@ -334,7 +340,7 @@ ollama serve                # start the daemon (auto-starts on macOS)
 export OLLAMA_MODEL=llama3.2
 ```
 
-Every AI feature works with Ollama **except** `nexus chat` and `nexus agent run` (those require Anthropic's tool use). With Ollama, no data ever leaves your machine.
+All streaming AI features work with Ollama. `nexus agent run` also works — it uses an offline structured-output mode (project snapshot in one prompt → JSON action plan). Only `nexus chat` (interactive tool use) still requires Anthropic. With Ollama, no data ever leaves your machine.
 
 ```bash
 # Use a different model

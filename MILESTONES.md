@@ -713,6 +713,75 @@ nexus chat 1
 
 ---
 
+## Milestone 18 — Offline Agent ✅ (complete)
+**Goal:** Close the "local-first paradox" — `nexus agent run` now works with
+Gemini and Ollama, not just Anthropic.  Instead of requiring tool use, a single
+structured-output prompt injects the full project snapshot and the model returns
+a JSON action plan.  The Anthropic tool-use path is completely unchanged.
+
+Deliverables:
+- [x] **`offline_agent_prompt()`** added to `ai.py`
+  - Accepts: `project_name`, `project_desc`, `stats_line`, `tasks_ctx`, `stale_ctx`, `ready_ctx`, `valid_task_ids`
+  - Returns a `(system, user)` tuple for a single `ai.complete()` call
+  - System prompt instructs JSON-only output (no fences, no prose)
+  - User prompt embeds full project snapshot + strict JSON schema + rules section
+  - Rules: observations 2–5, actions 0–5, only `add_note` / `create_task` types, task_id must be from valid list
+- [x] **Provider routing** in `agent_run` (`commands/agent.py`)
+  - `if not ai.supports_tools:` → `_run_offline_agent(...)` (Gemini or Ollama)
+  - `else:` → existing Anthropic tool-use loop (unchanged)
+  - Error message updated: lists all three provider env vars (`ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OLLAMA_MODEL`)
+  - `agent_run` docstring updated to describe both modes
+- [x] **`_build_offline_context(db, project_id)`** — pure function, no AI calls
+  - `stats_line`: done/total, in-progress, blocked, todo counts
+  - `tasks_ctx`: up to 10 most-recently-updated non-done tasks (context-window safe)
+  - `stale_ctx`: stale in-progress (3+ days) and long-blocked (6+ days) task lists
+  - `ready_ctx`: up to 5 tasks whose every prerequisite is met
+  - `valid_task_ids`: flat list of all task IDs in the project (for hallucination defence)
+- [x] **`_parse_offline_plan(raw, valid_task_ids)`** — strict, defensive validator
+  - Strips markdown code fences before parsing
+  - Raises `ValueError` on invalid JSON or non-dict top-level
+  - Observations: capped at 5, non-list treated as empty
+  - `add_note`: `task_id` must cast to `int` AND be in valid set; empty/whitespace notes skipped
+  - `create_task`: title truncated to 80 chars; unknown priority normalised to `"medium"`; empty title skipped
+  - Unknown action types silently skipped (forward-compatible)
+  - Actions capped at 5 total
+- [x] **`_run_offline_agent(ai, project, project_id, dry_run, auto_yes, db)`**
+  - Builds context, formats prompt, calls `ai.complete()`
+  - Retry loop: up to 3 attempts (initial + 2 retries) on `ValueError` / `RuntimeError`
+  - Corrective suffix appended on each retry: explains the parse error, re-states JSON requirement
+  - All 3 failures → `print_error(...)` + `SystemExit(1)`
+  - Displays observations as a bulleted list after the model call
+  - Actions executed with the same `_confirm_write()` guard as the Anthropic path (dry-run / auto-yes / interactive)
+  - `add_note` actions: validates task still exists in DB before writing
+  - `create_task` actions: honours `priority` from the plan (already normalised)
+  - Summary panel shows write log or "no changes" / "dry-run" message
+- [x] 66 new tests in `tests/test_agent_offline.py`, 0 warnings — **728 total**
+  - `TestOfflineAgentPrompt` (13) — tuple shape, system JSON instruction, project name/stats/ctx/schema in user, sorted ID list, desc optional
+  - `TestParseOfflinePlan` (23) — happy path, fence stripping (json/plain), invalid JSON, non-dict, observation cap, obs-not-list, add_note valid/invalid-id/non-int-id/float-id/empty-note, create_task valid/no-desc/empty-title/long-title/bad-priority/missing-priority, action cap, unknown type skipped, non-dict item skipped, actions-not-list
+  - `TestBuildOfflineContext` (9) — expected keys, stats reflect counts, all IDs present, done excluded from tasks_ctx, active tasks included, empty project defaults, 10-task cap, ready tasks shown, no-stale monkeypatched
+  - `TestRunOfflineAgent` (9) — no-actions run, observations displayed, add_note written, create_task written, dry_run no write, retry success, 3-fail exit, invalid-id skipped, Ollama provider name
+  - `TestAgentRunRouting` (8) — no-AI error, Gemini offline path, Ollama offline path, Anthropic skips offline, dry-run flag, default_project fallback, no default exits, invalid project exits
+  - `TestOfflineAgentPromptExported` (2) — importable from `nexus.ai`, helpers importable from `nexus.commands.agent`
+
+**Usage:**
+```bash
+# Offline agent with Gemini (no Anthropic key required)
+export GOOGLE_API_KEY=...
+nexus agent run 1                # offline review — confirms before writes
+nexus agent run 1 --dry-run      # show what the model suggests, no changes
+nexus agent run 1 --yes          # auto-approve all suggestions
+
+# Offline agent with Ollama (fully local, zero cost, zero cloud)
+export OLLAMA_MODEL=llama3.2
+nexus agent run 1                # completely offline agent review
+
+# Anthropic path is unchanged (full tool-use loop)
+export ANTHROPIC_API_KEY=sk-ant-...
+nexus agent run 1                # iterative tool calls, richer analysis
+```
+
+---
+
 ## Development Workflow
 
 ```bash

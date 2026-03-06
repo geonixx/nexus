@@ -835,6 +835,77 @@ AGENT_TOOLS: list[dict] = CHAT_TOOLS + [
 ]
 
 
+def offline_agent_prompt(
+    project_name: str,
+    project_desc: str,
+    stats_line: str,
+    tasks_ctx: str,
+    stale_ctx: str,
+    ready_ctx: str,
+    valid_task_ids: list[int],
+) -> tuple[str, str]:
+    """Prompt for offline (Gemini/Ollama) agent review — returns a JSON action plan.
+
+    Instead of iterative tool use, the full project context is injected in one shot
+    and the model returns a structured JSON object with observations and actions.
+
+    Action types (conservative, write-safe):
+      - add_note:    append a note to an existing task  (task_id must be valid)
+      - create_task: create a new task in the project
+
+    Returns:
+        (system_prompt, user_prompt) — pass to ai.complete() for a non-streaming call.
+    """
+    id_list = ", ".join(str(i) for i in sorted(valid_task_ids)) if valid_task_ids else "(none)"
+    desc_line = f"Description: {project_desc}" if project_desc else ""
+
+    system = (
+        "You are an AI scrum master performing an offline project review. "
+        "You will receive a snapshot of the project state and must return a JSON action plan. "
+        "Output ONLY valid JSON — no markdown fences, no explanation, no prose before or after."
+    )
+
+    user = f"""Review this project snapshot and return a JSON action plan.
+
+Project: {project_name}
+{desc_line}
+Stats: {stats_line}
+
+Tasks (up to 10 most recent):
+{tasks_ctx}
+
+Stale / blocked work:
+{stale_ctx}
+
+Ready to start:
+{ready_ctx}
+
+Valid task IDs in this project: [{id_list}]
+
+Return exactly this JSON structure (no other text):
+{{
+  "observations": [
+    "observation 1 — specific insight about project state",
+    "observation 2",
+    "observation 3"
+  ],
+  "actions": [
+    {{"type": "add_note", "task_id": <integer from valid IDs>, "note": "<actionable note text>"}},
+    {{"type": "create_task", "title": "<concise imperative title>", "priority": "low|medium|high|critical", "description": "<optional context>"}}
+  ]
+}}
+
+Rules:
+- observations: 2–5 specific insights (not generic praise or filler)
+- actions: 0–5 items; only use types "add_note" or "create_task"
+- add_note: task_id MUST be an integer from the valid task IDs list above
+- create_task: title max 80 chars; priority must be one of low/medium/high/critical
+- If no actions are needed, use an empty list: "actions": []
+- Do NOT invent task IDs — only use IDs from the valid list above"""
+
+    return system, user
+
+
 def health_diagnosis_prompt(
     project_name: str,
     grade: str,
