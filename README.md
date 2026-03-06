@@ -6,7 +6,7 @@
 
 **Local-first CLI project and task intelligence tool.**
 
-Nexus lives in your terminal and stays out of your way. It tracks projects, sprints, tasks, and time — with an optional AI layer (Claude or Gemini) that can suggest tasks, diagnose project health, write standups, and chat interactively about your work.
+Nexus lives in your terminal and stays out of your way. It tracks projects, sprints, tasks, and time — with an optional AI layer (Claude, Gemini, or local Ollama) that can suggest tasks, diagnose project health, write standups, and chat interactively about your work.
 
 > Built for developers who want the power of Jira without the browser tab.
 
@@ -16,8 +16,9 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 
 - **Full project management** — projects, sprints, tasks, time logging, priorities
 - **Task dependencies** — declare prerequisites, detect cycles, visualise the DAG
-- **AI-powered intelligence** — task suggestions, estimates, health diagnosis, interactive chat (Claude / Gemini)
+- **AI-powered intelligence** — task suggestions, estimates, health diagnosis, interactive chat (Claude / Gemini / Ollama)
 - **AI scrum master** — autonomous agent reviews your project, surfaces blockers, adds notes, creates tasks (`nexus agent run`)
+- **Local AI (Ollama)** — run every AI feature fully offline with any local model; zero API cost, zero data sent to the cloud (`OLLAMA_MODEL=llama3.2`)
 - **Tags / labels** — free-form tags on any task; filter by tag across sprints, next-queue, and search (`nexus tag`)
 - **Watch daemon** — background monitor that polls for stale work and can trigger the AI agent on a schedule (`nexus watch`)
 - **Slack bridge** — slash command server with Block Kit formatting, signature verification, and async AI review (`nexus slack serve`)
@@ -25,7 +26,7 @@ Nexus lives in your terminal and stays out of your way. It tracks projects, spri
 - **Portfolio workspace** — health grades and cross-project priority queue across every project at once
 - **Security-first** — automatic file permission hardening, secret-in-config blocking, audit command
 - **Fully local** — single SQLite file, WAL mode for concurrent access, zero cloud, works offline
-- **623 tests, 0 warnings**
+- **662 tests, 0 warnings**
 
 ---
 
@@ -306,19 +307,47 @@ Checks: directory permissions (700), database permissions (600), config permissi
 
 ## AI Setup
 
-Nexus supports two AI providers. Set one (or both) as environment variables:
+Nexus supports three AI providers, auto-selected in priority order:
+
+### 1. Anthropic Claude (preferred — full feature set)
 
 ```bash
-# Claude (Anthropic) — preferred for chat and tool use
 export ANTHROPIC_API_KEY=sk-ant-...
+```
 
-# Gemini — fallback; works for all non-chat features
+Required for `nexus chat` and `nexus agent run` (tool use). Get a key at [console.anthropic.com](https://console.anthropic.com/).
+
+### 2. Google Gemini (fallback — all non-tool features)
+
+```bash
 export GOOGLE_API_KEY=AIza...
 ```
 
-Nexus auto-selects Anthropic → Gemini in priority order. If neither is set, all non-AI commands continue to work normally.
+Works for suggestions, estimates, digests, reports. Does not support tool use. Get a key at [aistudio.google.com](https://aistudio.google.com/app/apikey).
 
-> **Tip:** Add to `~/.zshrc` or `~/.bashrc` so you never have to think about it.
+### 3. Ollama (local — fully offline, zero cost)
+
+```bash
+# Install Ollama: https://ollama.com
+ollama pull llama3.2        # download the model (~2 GB)
+ollama serve                # start the daemon (auto-starts on macOS)
+export OLLAMA_MODEL=llama3.2
+```
+
+Every AI feature works with Ollama **except** `nexus chat` and `nexus agent run` (those require Anthropic's tool use). With Ollama, no data ever leaves your machine.
+
+```bash
+# Use a different model
+export OLLAMA_MODEL=qwen2.5-coder   # great for code tasks
+export OLLAMA_MODEL=mistral          # another solid option
+
+# Override the host (e.g. Ollama on a different machine)
+export OLLAMA_HOST=http://192.168.1.10:11434
+```
+
+Nexus auto-selects **Anthropic → Gemini → Ollama** in priority order. If none are set, all non-AI commands continue to work normally.
+
+> **Tip:** Add your preferred provider to `~/.zshrc` or `~/.bashrc` so you never have to think about it.
 
 ---
 
@@ -378,7 +407,7 @@ uv sync --dev
 # or: pip install -e ".[ai]" && pip install pytest pytest-cov
 
 # Run tests
-uv run pytest                                # all 623 tests
+uv run pytest                                # all 662 tests
 uv run pytest tests/test_deps.py -v         # specific module
 uv run pytest --cov=nexus --cov-report=term-missing  # with coverage
 
@@ -425,6 +454,7 @@ src/nexus/
 - [x] Slack bridge — slash command server with Block Kit and async AI review
 - [x] Tags / labels — free-form task labels with cross-project search
 - [x] SQLite WAL mode — concurrent multi-agent read/write access
+- [x] Ollama provider — fully local AI; zero cloud, zero cost, zero latency tax
 - [ ] Web UI (read-only dashboard, served locally)
 - [ ] Multi-user sync via git (collaborative local-first)
 - [ ] Recurring tasks

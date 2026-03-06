@@ -1,11 +1,19 @@
-"""AI client for Nexus — wraps Anthropic and Gemini SDKs with streaming and graceful fallback.
+"""AI client for Nexus — wraps Anthropic, Gemini, and Ollama with streaming and graceful fallback.
 
 Provider selection (auto-detected from environment):
   1. Anthropic  — set ANTHROPIC_API_KEY
   2. Gemini     — set GOOGLE_API_KEY (fallback when no Anthropic key)
+  3. Ollama     — set OLLAMA_MODEL (local, fully offline; no API key required)
 
-Both providers expose the same `stream()` / `complete()` interface.
-Tool use (nexus chat) requires Anthropic.
+All three providers expose the same `stream()` / `complete()` interface.
+Tool use (nexus chat, nexus agent run) requires Anthropic.
+
+Ollama quick-start:
+  brew install ollama        # macOS
+  ollama pull llama3.2       # download a model (~2 GB)
+  ollama serve               # start the daemon (auto-started on macOS)
+  export OLLAMA_MODEL=llama3.2
+  nexus task suggest 1       # fully local, zero cost
 """
 
 from __future__ import annotations
@@ -15,6 +23,8 @@ from typing import Any, Callable, Iterator
 
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
 GEMINI_MODEL = "gemini-2.5-flash-lite"
+OLLAMA_DEFAULT_HOST = "http://localhost:11434"
+OLLAMA_DEFAULT_MODEL = "llama3.2"
 MAX_TOKENS = 1024
 CHAT_MAX_TOKENS = 2048
 
@@ -216,14 +226,134 @@ class _GeminiProvider(_AIProvider):
             raise RuntimeError(f"Gemini API error: {e}")
 
 
+# ── Ollama provider ───────────────────────────────────────────────────────────
+
+class _OllamaProvider(_AIProvider):
+    """Local Ollama provider — fully offline, no API key required.
+
+    Enabled by setting OLLAMA_MODEL (e.g. 'llama3.2').
+    Optionally override the host via OLLAMA_HOST (default: http://localhost:11434).
+
+    Streaming and non-streaming completions are supported.  Tool use is NOT
+    supported — nexus agent run and nexus chat require ANTHROPIC_API_KEY.
+
+    The health check (GET /api/tags) uses a hard 3-second timeout so that
+    Nexus never hangs waiting for a sleeping daemon.
+    """
+
+    def __init__(self) -> None:
+        self._model = os.environ.get("OLLAMA_MODEL", "").strip()
+        self._host = (
+            os.environ.get("OLLAMA_HOST", "").strip() or OLLAMA_DEFAULT_HOST
+        ).rstrip("/")
+        self._available: bool | None = None  # cached after first probe
+
+    @property
+    def available(self) -> bool:
+        if not self._model:
+            return False
+        if self._available is None:
+            self._available = self._check_health()
+        return self._available
+
+    def _check_health(self) -> bool:
+        """Probe GET /api/tags with a 3-second timeout.  Returns False on any error."""
+        import urllib.request  # noqa: PLC0415
+        import urllib.error    # noqa: PLC0415
+        try:
+            req = urllib.request.Request(f"{self._host}/api/tags")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _build_messages(self, system: str, user: str) -> list[dict]:
+        msgs: list[dict] = []
+        if system:
+            msgs.append({"role": "system", "content": system})
+        msgs.append({"role": "user", "content": user})
+        return msgs
+
+    def _url_error_to_runtime(self, exc: Exception) -> RuntimeError:
+        return RuntimeError(
+            f"Ollama connection error ({self._host}): {exc}. "
+            "Is the Ollama daemon running?  Try: ollama serve"
+        )
+
+    # ── Core interface ─────────────────────────────────────────────────────────
+
+    def stream(self, system: str, user: str) -> Iterator[str]:
+        """Yield response tokens from Ollama as they arrive (NDJSON streaming)."""
+        import json              # noqa: PLC0415
+        import urllib.request   # noqa: PLC0415
+        import urllib.error     # noqa: PLC0415
+
+        payload = json.dumps({
+            "model": self._model,
+            "messages": self._build_messages(system, user),
+            "stream": True,
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{self._host}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode().strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    chunk = obj.get("message", {}).get("content", "")
+                    if chunk:
+                        yield chunk
+                    if obj.get("done"):
+                        break
+        except Exception as exc:
+            raise self._url_error_to_runtime(exc) from exc
+
+    def complete(self, system: str, user: str) -> str:
+        """Single non-streaming call — used for structured JSON output."""
+        import json              # noqa: PLC0415
+        import urllib.request   # noqa: PLC0415
+
+        payload = json.dumps({
+            "model": self._model,
+            "messages": self._build_messages(system, user),
+            "stream": False,
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{self._host}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                body = json.loads(resp.read())
+            return body.get("message", {}).get("content", "")
+        except Exception as exc:
+            raise self._url_error_to_runtime(exc) from exc
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 class NexusAI:
     """Provider-agnostic AI client.
 
-    Auto-selects backend:
-      - Anthropic if ANTHROPIC_API_KEY is set
-      - Gemini   if GOOGLE_API_KEY is set (and no Anthropic key)
+    Auto-selects backend in priority order:
+      1. Anthropic — ANTHROPIC_API_KEY set
+      2. Gemini    — GOOGLE_API_KEY set (and no Anthropic key)
+      3. Ollama    — OLLAMA_MODEL set and a local daemon reachable (fully offline)
 
     Always safe to instantiate — check `.available` before using.
     """
@@ -232,6 +362,8 @@ class NexusAI:
         self._provider: _AIProvider = _AnthropicProvider()
         if not self._provider.available:
             self._provider = _GeminiProvider()
+        if not self._provider.available:
+            self._provider = _OllamaProvider()
 
     @property
     def available(self) -> bool:
@@ -243,6 +375,8 @@ class NexusAI:
             return "Anthropic"
         if isinstance(self._provider, _GeminiProvider):
             return "Gemini"
+        if isinstance(self._provider, _OllamaProvider):
+            return f"Ollama ({self._provider._model})"
         return "unknown"
 
     def stream(self, system: str, user: str) -> Iterator[str]:
@@ -255,7 +389,7 @@ class NexusAI:
 
     @property
     def supports_tools(self) -> bool:
-        """True only for Anthropic — tool use is not available via the Gemini provider."""
+        """True only for Anthropic — tool use is not available via Gemini or Ollama."""
         return isinstance(self._provider, _AnthropicProvider)
 
     def chat_turn(
@@ -284,7 +418,8 @@ class NexusAI:
         """
         if not isinstance(self._provider, _AnthropicProvider):
             raise RuntimeError(
-                "Chat mode requires ANTHROPIC_API_KEY — tool use is not available with Gemini."
+                f"Chat mode requires ANTHROPIC_API_KEY — "
+                f"tool use is not available with {self.provider_name}."
             )
 
         import anthropic as _anthropic  # noqa: PLC0415

@@ -644,6 +644,75 @@ nexus watch 1 --agent --max-agent-cycles 0        # unlimited (default)
 
 ---
 
+## Milestone 17 — Ollama Integration (Local AI) ✅ (complete)
+**Goal:** Add Ollama as a third AI provider, closing the "local-first paradox" gap.
+Every AI feature runs fully offline with a local model — no API key, no cloud, no cost.
+Architecture is surgically minimal: a single new `_OllamaProvider` class; no new CLI
+commands; no new runtime dependencies.
+
+Deliverables:
+- [x] **`_OllamaProvider`** in `ai.py` — pure stdlib (`urllib.request`), zero new dependencies
+  - `available` — checks `OLLAMA_MODEL` is set AND probes `GET /api/tags` with a **3-second hard timeout**
+  - Health check result is cached; never hangs waiting for a sleeping daemon
+  - `stream(system, user)` — `POST /api/chat` with `stream=true`; parses NDJSON line-by-line; skips malformed lines silently
+  - `complete(system, user)` — `POST /api/chat` with `stream=false`; used for JSON-mode tasks (`nexus task ingest`)
+  - `supports_tools = False` — tool use is Anthropic-only; `chat_turn()` raises a clear error naming the active provider
+  - Graceful `RuntimeError` on `URLError` with a "is the daemon running? Try: ollama serve" hint
+  - Config: `OLLAMA_MODEL` (required to enable), `OLLAMA_HOST` (optional, default `http://localhost:11434`)
+- [x] **Provider chain** updated: Anthropic → Gemini → Ollama
+  - `NexusAI.__init__` falls through to Ollama if neither cloud key is set
+  - `NexusAI.provider_name` returns `"Ollama (llama3.2)"` style string
+  - `NexusAI.supports_tools` docstring updated: "True only for Anthropic — not available via Gemini **or Ollama**"
+  - `NexusAI.chat_turn()` error message includes the active provider name: `"…not available with Ollama (llama3.2)."`
+- [x] **Module docstring** updated with Ollama quick-start (`brew install ollama` → `ollama pull llama3.2` → `export OLLAMA_MODEL=llama3.2`)
+- [x] **`nexus init`** — Ollama detection step added (uses `shutil.which("ollama")`)
+  - If Ollama binary found AND `OLLAMA_MODEL` set → green ✓ confirmation
+  - If binary found but no model → cyan hint with `export OLLAMA_MODEL=llama3.2` and `ollama pull` instruction
+  - If no binary AND no cloud keys → suggest Ollama install with link
+  - No-providers warning updated: "No AI providers found." (was "No AI keys found.")
+- [x] **No `nexus ollama` command group** — users already have `ollama list`; zero extra CLI surface
+- [x] **All existing AI features work with Ollama** (streaming, non-streaming)
+  - `nexus task suggest`, `nexus task estimate`, `nexus report digest`, `nexus report week --ai`
+  - `nexus standup --ai`, `nexus sprint plan --ai`, `nexus project health --ai`
+  - `nexus task ingest` (JSON-mode via `complete()`)
+  - `nexus chat` and `nexus agent run` → print helpful error and exit cleanly
+- [x] 39 new tests in `tests/test_ollama.py`, 0 warnings — **662 total**
+  - `TestOllamaProviderAvailability` — model env var, empty model, daemon healthy, daemon unreachable, status!=200, caching, custom host, trailing slash strip, default host, model name stored
+  - `TestOllamaStream` — chunks yielded, system+user messages sent, empty system skipped, correct model name, URLError → RuntimeError, malformed JSON lines skipped, stops after done=true
+  - `TestOllamaComplete` — content returned, stream=false sent, URLError → RuntimeError
+  - `TestNexusAIProviderChain` — Ollama selected, Anthropic priority, Gemini priority, unreachable daemon, provider_name, supports_tools=False, chat_turn error names provider, no-providers fallback
+  - `TestOllamaCLI` — suggest, digest, estimate via Ollama; chat + agent run reject Ollama gracefully; daemon-down shows user-readable error
+  - `TestInitOllamaDetection` — model set, bin found but no model, no bin no cloud, no-providers warning
+
+**Usage:**
+```bash
+# Quick-start (macOS)
+brew install ollama
+ollama pull llama3.2          # ~2 GB, one-time download
+export OLLAMA_MODEL=llama3.2  # add to ~/.zshrc for persistence
+
+# Now all AI features work offline
+nexus task suggest 1           # local suggestions, zero cost
+nexus task estimate 3          # local estimate
+nexus report digest 1          # local status narrative
+nexus task ingest 1 "user reports login failure on iOS"  # parse to task
+
+# Different models
+export OLLAMA_MODEL=qwen2.5-coder   # optimised for code tasks
+export OLLAMA_MODEL=mistral          # fast, general purpose
+
+# Custom Ollama host (e.g. GPU server on your LAN)
+export OLLAMA_HOST=http://192.168.1.42:11434
+export OLLAMA_MODEL=llama3.2
+
+# Tool-use features still require Anthropic
+export ANTHROPIC_API_KEY=sk-ant-...  # takes priority; unlocks chat + agent run
+nexus agent run 1
+nexus chat 1
+```
+
+---
+
 ## Development Workflow
 
 ```bash

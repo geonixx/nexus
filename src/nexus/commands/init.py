@@ -7,6 +7,7 @@ and walks the user through creating their first project.
 from __future__ import annotations
 
 import os
+import shutil
 
 import click
 from rich.rule import Rule
@@ -67,11 +68,27 @@ def init_cmd(db: Database):
             console.print(f"       [dim]Get a key: {url}[/dim]")
             console.print(f"       [dim]Then: export {var}=<your-key>[/dim]")
 
+    # ── Ollama (local AI) ──────────────────────────────────────────────────────
+    ollama_bin = shutil.which("ollama")
+    ollama_model = os.environ.get("OLLAMA_MODEL", "").strip()
+
+    if ollama_bin and ollama_model:
+        console.print(
+            f"  [green]✓[/green]  Ollama (local AI) — model [bold]{ollama_model}[/bold] selected"
+        )
+        configured.append(f"Ollama ({ollama_model})")
+    elif ollama_bin and not ollama_model:
+        console.print("  [cyan]→[/cyan]  Ollama detected — enable it with:")
+        console.print("       [dim]export OLLAMA_MODEL=llama3.2  # then: ollama pull llama3.2[/dim]")
+    elif not ollama_bin and not configured:
+        console.print("  [dim]○[/dim]  Ollama (local AI, free) — https://ollama.com")
+        console.print("       [dim]Install, then: ollama pull llama3.2 && export OLLAMA_MODEL=llama3.2[/dim]")
+
     if not configured:
         console.print()
         console.print(
-            "  [yellow]⚠  No AI keys found.[/yellow] All non-AI commands work fine.\n"
-            "  Set at least one API key to enable AI features."
+            "  [yellow]⚠  No AI providers found.[/yellow] All non-AI commands work fine.\n"
+            "  Set an API key or install Ollama to enable AI features."
         )
 
     # ── Step 5: Offer to create a first project ────────────────────────────────
